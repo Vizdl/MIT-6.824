@@ -2,3 +2,4 @@
 *.tar.gz
 *.so 
 /go_test/hello
+mr-out-0
