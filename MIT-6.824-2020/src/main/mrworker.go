@@ -20,6 +20,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	fmt.Printf("%s\n",os.Args[1])
 	mapf, reducef := loadPlugin(os.Args[1])
 
 	mr.Worker(mapf, reducef)
