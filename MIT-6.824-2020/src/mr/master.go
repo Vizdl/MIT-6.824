@@ -7,6 +7,8 @@ import "os"
 import "net/rpc"
 import "net/http"
 import "sync"
+import "fmt"
+// import "time"
 
 
 type MasterStatus int32
@@ -21,7 +23,7 @@ type Master struct {
 	// Your definitions here.
 	nReduce int
 	states MasterStatus
-	taskCounter int /* 当前阶段任务剩余数 */
+	taskCounter int /* 当前阶段未派出的任务数量 */
 	/*
 	对任务进行管理的一个结构 : 
 	要求 : 
@@ -51,16 +53,46 @@ GetTask : 提交申请书(Application),获取申请结果。
 返回值 :
 taskMessage : 如若申请失败为nil,申请者应该退出。否则应该是有效指针。
 */
-func (m *Master) GetTask(application *Application, taskMessage *TaskMessage)error{
+func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// 如若任务完全派出
+	if m.taskCounter <= 0 {
+		taskMessage.TaskCode = 0
+		fmt.Println("让worker回去睡觉")
+	} else {
+		m.taskCounter--
+		// 找到第一个没有派发出去的任务。
+		var firstTask *[]*TaskMessage
+		var firstRunTask *[]*TaskMessage
+		if m.states == MasterMap {
+			firstTask = &m.mapTask
+			firstRunTask = &m.runMapTask
+		}else {
+			firstTask = &m.reduceTask
+			firstRunTask = &m.runReduceTask
+		}
+		for i, task := range (*firstTask) {
+			if task != nil {
+				fmt.Printf("第%d次任务分配 taskMessage value :  %v\n", m.taskCounter, taskMessage)
+				*taskMessage = *task
+				fmt.Printf("222 taskMessage value :  %v\n", taskMessage)
+				(*firstRunTask)[i] = task
+				// 睡眠然后继续
+				// time.Sleep(10)
+				task = nil
+				// *taskMessage = *(*firstRunTask)[i]
+				break;
+			}
+		}
+	}
 	return nil;
 }
 
 /*
 SubmitTask : 提交任务,告知master当前自己的任务状态(可能成功也可能失败)。
 */
-func (m *Master) SubmitTask(application *Application, taskMessage *TaskMessage)error{
+func (m *Master) SubmitTask(application *SubmitMessage, taskMessage *TaskMessage)error{
 	return nil;
 }
 
@@ -71,7 +103,7 @@ func (m *Master) SubmitTask(application *Application, taskMessage *TaskMessage)e
 func (m *Master) server() {
 	rpc.Register(m)
 	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", ":1234")
+	l, e := net.Listen("tcp", ":2345")
 	// os.Remove("mr-socket")
 	// l, e := net.Listen("unix", "mr-socket")
 	if e != nil {
@@ -100,13 +132,14 @@ func MakeMaster(files []string, nReduce int) *Master {
 	if nReduce <= 0 {
 		nReduce = 1
 	}
-
+	
 	m := Master{}
-
+	m.taskCounter = len(files)
 	// Your code here.
 	// 核查文件系统是否存在files内文件
 	for _, filename := range files {
 		file, err := os.Open(filename)
+		// fmt.Printf(filename + "\n")
 		if err != nil {
 			m.states = MasterFailed
 			log.Fatalf("cannot open %v", filename)
@@ -116,18 +149,21 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m.states = MasterMap
 	m.mapTask = make([]*TaskMessage, len(files))
 	m.runMapTask = make([]*TaskMessage, len(files))
-	m.reduceTask = make([]*TaskMessage, len(nReduce))
-	m.runReduceTask = make([]*TaskMessage, len(nReduce))
+	m.reduceTask = make([]*TaskMessage, nReduce)
+	m.runReduceTask = make([]*TaskMessage, nReduce)
 
 	// 设置 map 和 reduce 任务。
 	taskId := 0
 	for _, filename := range files {
-		taskMessage := TaskMessage{(1 << 31) + taskId, nil, nil, nReduce}
-		m.mapTask[taskId++] = taskMessage
+		taskMessage := TaskMessage{(1 << 31) + taskId, filename, "./", nReduce}
+		m.mapTask[taskId] = &taskMessage
+		m.runMapTask[taskId] = nil;
+		taskId++
 	}
 	for i := 0; i < nReduce; i++{
-		taskMessage := TaskMessage{(1 << 31) + taskId, nil, nil, nReduce}
-		m.reduceTask[i] = taskMessage
+		taskMessage := TaskMessage{(1 << 31) + taskId, "", "", nReduce}
+		m.reduceTask[i] = &taskMessage
+		m.runReduceTask[i] = nil;
 	}
 	// 开启服务,等待连接。
 	m.server()

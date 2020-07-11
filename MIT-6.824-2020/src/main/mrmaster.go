@@ -17,9 +17,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage: mrmaster inputfiles...\n")
 		os.Exit(1)
 	}
-
+	// fmt.Printf("os.Args type:%T\n", os.Args)
+	// fmt.Printf("os.Args len:%d\n", len(os.Args))
+	// fmt.Println(os.Args);
+	// fmt.Println(os.Args[2]);
 	m := mr.MakeMaster(os.Args[1:], 10) // 调用 master.go 中 MakeMaster 函数。设置有10个 reduce task 
-	fmt.Println("Hello World!");
 	for m.Done() == false {
 		fmt.Println("m.Done() == false");
 		time.Sleep(time.Second)

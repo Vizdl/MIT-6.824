@@ -22,6 +22,9 @@ type ExampleReply struct {
 type Application struct{
 	
 }
+type SubmitMessage struct{
+	submitType int
+}
 
 type TaskMessage struct{
 	/* 
@@ -32,9 +35,13 @@ type TaskMessage struct{
 		3 : 未分配的任务号
 	低30bit表示任务id
 	*/
-	taskCode int 
-	file string /* 输入文件 */
-	dir string /* 中间目录 */
-	nReduce int 
+	TaskCode int 
+	/*
+	对于 map 来说 : file 是输入,dir是输出。
+	对于 reduce 来说 : dir 是输入, file 是输出。
+	*/
+	File string 
+	Dir string 
+	NReduce int 
 }
 
