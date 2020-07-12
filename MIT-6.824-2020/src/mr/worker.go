@@ -43,31 +43,23 @@ func Worker(mapf func(string, string) []KeyValue,
 	// uncomment to send the Example RPC to the master.
 	// CallExample()
 	// 循环请求任务
-	application := Application{}
-	taskMessage := TaskMessage{}
 	for true {
+		application := Application{}
+		taskMessage := TaskMessage{}
 		// fmt.Printf("aaa")
 		call("Master.GetTask", &application, &taskMessage) // 请求任务
+		submitMessage := SubmitMessage{taskMessage.TaskCode,uint32(1)}
+		fmt.Printf("submitMessage value :  %v\n", submitMessage)
 		// if taskMessage == nil{ // 无任务
 		// 	break; // 退出
 		// }
 		// fmt.Printf("aaa")
+		fmt.Printf("taskMessage value :  %v\n", taskMessage)
 		taskType := taskMessage.TaskCode >> 30;
 		taskId := (taskMessage.TaskCode << 2) >> 2
-		if taskType == 0 { // wait
-			// 睡眠然后继续
-		// fmt.Printf("aaa")
-			time.Sleep(10)
-			continue
-		}
-		if taskType == 1 { // map
-			// 创建输出文件表
-			encoders := make([]*json.Encoder, taskMessage.NReduce)
-			for i := 0; i < taskMessage.NReduce; i++ {
-				file, _ := os.Create(fmt.Sprintf("%s/mr-%d-%d", taskMessage.Dir, taskId, i))
-				encoders[i] = json.NewEncoder(file)
-				defer file.Close()
-			}
+		fmt.Printf("taskMessage.TaskCode : %x, taskType : %x, taskId ： %x\n",taskMessage.TaskCode,taskType, taskId)
+		switch taskType {
+		case 1:
 			// 打开输入文件
 			ofile, err := os.Open(taskMessage.File)
 			if err != nil {
@@ -79,22 +71,30 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			ofile.Close()
 			kva := mapf(taskMessage.File, string(content))
-			// 将kay-value分配写到不同文件内。
+			// 将kay-value分配到不同的数组中。
+			intermediates := [][]KeyValue{}
+			for i := 0; i < taskMessage.NReduce; i++{
+				intermediates = append(intermediates, []KeyValue{})
+			}
 			for i := 0; i < len(kva); i++{
 				// fmt.Fprintf(encoders[ihash(kva[i].Key)], "%v %v\n", kva[i].Key, kva[i].Value)
-				encoders[ihash(kva[i].Key)].Encode(kva[i])
+				idx := ihash(kva[i].Key) % taskMessage.NReduce
+				intermediates[idx] = append(intermediates[idx], kva[i])
 			}
-		}else if taskType == 2 { // reduce
+			// 创建输出文件表
+			for i := 0; i < taskMessage.NReduce; i++ {
+				file, _ := os.Create(fmt.Sprintf("%s/mr-%d-%d", taskMessage.Dir, taskId, i))
+				encoder := json.NewEncoder(file)
+				defer file.Close()
+				encoder.Encode(intermediates[i])
+				fmt.Printf("json 读入类型 : %T\n", intermediates[i])
+			}
+			call("Master.SubmitTask", &submitMessage, &taskMessage)
+			break
+		case 2: // reduce
 			intermediate := []KeyValue{}
-			temp := []KeyValue{}
 			// 创建输出文件
-			ofile, _ := os.Create(fmt.Sprintf("mr-out-%d", taskId))
-			// 打开中间目录下所有该reduce下的中间文件
-			// dir, err := os.OpenFile(taskMessage.dir, os.O_RDWR, os.ModeDir)
-			// if err != nil {
-			// 	fmt.Println(err.Error())
-			// 	return
-			// }
+			ofile, _ := os.Create(taskMessage.File)
 			// 遍历目录下的文件,观察其文件名是否符合。
 			dir_list, err := ioutil.ReadDir(taskMessage.Dir)
 			if err != nil {
@@ -102,59 +102,55 @@ func Worker(mapf func(string, string) []KeyValue,
 				return
 			}
 			for _, v := range dir_list {
-				match,_ := regexp.MatchString(fmt.Sprintf("mr-*-", taskId),v.Name()) 
+				// fmt.Printf("mr-[1-9][0-9]*-%d$\n", taskId)
+				match,_ := regexp.MatchString(fmt.Sprintf("mr-[1-9][0-9]*-%d$", taskId),v.Name()) 
 				if match { // 如若匹配则添加到输入中
+					var temp []KeyValue
+					fmt.Printf("json 读出类型 : %T\n", temp)
+					fmt.Printf("reduce 正在读取文件 %s\n", v.Name())
 					// 打开这个文件
-					file ,_ := os.Open(v.Name())
+					file ,_ := os.Open(taskMessage.Dir + "/" + v.Name())
 					decoder := json.NewDecoder(file)
-   					err = decoder.Decode(&temp)
+					err = decoder.Decode(&temp)
+					if err != nil {
+						fmt.Println("Decoder failed", err.Error())
+					} else {
+						fmt.Println("Decoder success")
+					}
+					fmt.Printf("len(temp) %d\n", len(temp))
 					intermediate = append(intermediate, temp...)
-				}
-				// 排序
-				sort.Sort(ByKey(intermediate))
-				// 分类然后reduce
-				i := 0
-				for i < len(intermediate) {
-					j := i + 1
-					for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-						j++
-					}
-					values := []string{}
-					for k := i; k < j; k++ {
-						values = append(values, intermediate[k].Value)
-					}
-					output := reducef(intermediate[i].Key, values)
-
-					// this is the correct format for each line of Reduce output.
-					fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
-
-					i = j
+					fmt.Printf("len(intermediate) %d\n", len(intermediate))
+					file.Close()
 				}
 			}
+			// 排序
+			sort.Sort(ByKey(intermediate))
+			// 分类然后reduce
+			i := 0
+			for i < len(intermediate) {
+				j := i + 1
+				for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+					j++
+				}
+				values := []string{}
+				for k := i; k < j; k++ {
+					values = append(values, intermediate[k].Value)
+				}
+				output := reducef(intermediate[i].Key, values)
+
+				// this is the correct format for each line of Reduce output.
+				fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+				i = j
+			}
+		default :// wait
+			// 睡眠然后继续
+			time.Sleep(time.Second)
+			continue
 		}
 	}
 }
 
-//
-// example function to show how to make an RPC call to the master.
-//
-func CallExample() {
-
-	// declare an argument structure.
-	args := ExampleArgs{}
-
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	call("Master.Example", &args, &reply)
-
-	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
-}
 
 /*
 send an RPC request to the master, wait for the response.
@@ -167,7 +163,7 @@ args : 待调用函数传入参数
 reply : 待调用函数传出参数
 */
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":2345")
+	c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":3333")
 	// c, err := rpc.DialHTTP("unix", "mr-socket")
 	if err != nil {
 		log.Fatal("dialing:", err)

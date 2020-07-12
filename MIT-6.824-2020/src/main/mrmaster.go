@@ -23,7 +23,7 @@ func main() {
 	// fmt.Println(os.Args[2]);
 	m := mr.MakeMaster(os.Args[1:], 10) // 调用 master.go 中 MakeMaster 函数。设置有10个 reduce task 
 	for m.Done() == false {
-		fmt.Println("m.Done() == false");
+		// fmt.Println("m.Done() == false");
 		time.Sleep(time.Second)
 	}
 

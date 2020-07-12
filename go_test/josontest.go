@@ -32,6 +32,7 @@ func readFile() {
     // 创建json解码器
     decoder := json.NewDecoder(filePtr)
     err = decoder.Decode(&person)
+    fmt.Printf("json读入type:%T\n", person)
     if err != nil {
         fmt.Println("Decoder failed", err.Error())
 
@@ -53,9 +54,10 @@ func writeFile() {
 
     // 创建Json编码器
     encoder := json.NewEncoder(filePtr)
-    fmt.Println("ebcode type : %T",encoder)
     fmt.Printf("encoder type:%T\n", encoder)
     err = encoder.Encode(personInfo)
+    
+    fmt.Printf("json读入type:%T\n", personInfo)
     if err != nil {
         fmt.Println("Encoder failed", err.Error())
 
