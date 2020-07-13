@@ -24,6 +24,17 @@ MasterComplete : 所有 Reduce 成功完成后
 MasterFailed : 异常初始化后 
 */
 
+
+/*
+什么时候 master 死亡? 
+	当所有任务都结束的时候
+什么时候 worker 死亡?
+	获取任务很久但是超时的时候
+什么时候 master 认定 任务失败?
+	1) 任务长时间未完成
+	2) 任务被提交的时候返回为失败。
+*/
+
 /*
 这些阶段要按照完成顺序来。
 */
@@ -68,8 +79,8 @@ func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) er
 	if m.unsent <= 0 {
 		temp := TaskMessage{uint32(0), "111", "222", m.nReduce}
 		*taskMessage = *(&temp)
-		fmt.Println("让worker回去睡觉")
-		fmt.Printf("taskMessage value :  %v\n", taskMessage)
+		// fmt.Println("让worker回去睡觉")
+		// fmt.Printf("taskMessage value :  %v\n", taskMessage)
 	} else {
 		// 找到第一个没有派发出去的任务。
 		var firstTask *[]*TaskMessage
@@ -143,6 +154,7 @@ func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessa
 			m.uncompleted = m.nReduce
 		}else if m.states == MasterReduce {
 			m.states = MasterComplete;
+			fmt.Printf("==================== 所有任务完成 ====================\n")
 		}else {
 
 		}
@@ -157,7 +169,7 @@ func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessa
 func (m *Master) server() {
 	rpc.Register(m)
 	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", ":3333")
+	l, e := net.Listen("tcp", ":9999")
 	// os.Remove("mr-socket")
 	// l, e := net.Listen("unix", "mr-socket")
 	if e != nil {
@@ -171,11 +183,9 @@ func (m *Master) server() {
 // if the entire job has finished.
 //
 func (m *Master) Done() bool {
-	ret := false
-
-	// Your code here.
-
-
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ret := m.states == MasterComplete || m.states == MasterFailed
 	return ret
 }
 
@@ -211,14 +221,14 @@ func MakeMaster(files []string, nReduce int) *Master {
 	// 设置 map 和 reduce 任务。
 	taskId := uint32(0)
 	for _, filename := range files {
-		taskMessage := TaskMessage{(1 << 30) + taskId, filename, "./mid/", nReduce}
+		taskMessage := TaskMessage{(1 << 30) + taskId, filename, ".", nReduce}
 		m.mapTask[taskId] = &taskMessage
 		m.runMapTask[taskId] = nil;
 		taskId++
 	}
 	taskId = uint32(0)
 	for i := 0; i < nReduce; i++{
-		taskMessage := TaskMessage{(2 << 30) + taskId, fmt.Sprintf("mr-out-%d", taskId), "./mid/", nReduce}
+		taskMessage := TaskMessage{(2 << 30) + taskId, fmt.Sprintf("mr-out%d", taskId), ".", nReduce}
 		m.reduceTask[i] = &taskMessage
 		m.runReduceTask[i] = nil;
 		taskId++

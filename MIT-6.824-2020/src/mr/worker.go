@@ -46,14 +46,9 @@ func Worker(mapf func(string, string) []KeyValue,
 	for true {
 		application := Application{}
 		taskMessage := TaskMessage{}
-		// fmt.Printf("aaa")
 		call("Master.GetTask", &application, &taskMessage) // 请求任务
+		// time.Sleep(time.Second * 5)
 		submitMessage := SubmitMessage{taskMessage.TaskCode,uint32(1)}
-		fmt.Printf("submitMessage value :  %v\n", submitMessage)
-		// if taskMessage == nil{ // 无任务
-		// 	break; // 退出
-		// }
-		// fmt.Printf("aaa")
 		fmt.Printf("taskMessage value :  %v\n", taskMessage)
 		taskType := taskMessage.TaskCode >> 30;
 		taskId := (taskMessage.TaskCode << 2) >> 2
@@ -87,7 +82,6 @@ func Worker(mapf func(string, string) []KeyValue,
 				encoder := json.NewEncoder(file)
 				defer file.Close()
 				encoder.Encode(intermediates[i])
-				fmt.Printf("json 读入类型 : %T\n", intermediates[i])
 			}
 			call("Master.SubmitTask", &submitMessage, &taskMessage)
 			break
@@ -102,24 +96,17 @@ func Worker(mapf func(string, string) []KeyValue,
 				return
 			}
 			for _, v := range dir_list {
-				// fmt.Printf("mr-[1-9][0-9]*-%d$\n", taskId)
 				match,_ := regexp.MatchString(fmt.Sprintf("mr-[1-9][0-9]*-%d$", taskId),v.Name()) 
 				if match { // 如若匹配则添加到输入中
 					var temp []KeyValue
-					fmt.Printf("json 读出类型 : %T\n", temp)
-					fmt.Printf("reduce 正在读取文件 %s\n", v.Name())
 					// 打开这个文件
 					file ,_ := os.Open(taskMessage.Dir + "/" + v.Name())
 					decoder := json.NewDecoder(file)
 					err = decoder.Decode(&temp)
 					if err != nil {
 						fmt.Println("Decoder failed", err.Error())
-					} else {
-						fmt.Println("Decoder success")
-					}
-					fmt.Printf("len(temp) %d\n", len(temp))
+					} 
 					intermediate = append(intermediate, temp...)
-					fmt.Printf("len(intermediate) %d\n", len(intermediate))
 					file.Close()
 				}
 			}
@@ -143,6 +130,8 @@ func Worker(mapf func(string, string) []KeyValue,
 
 				i = j
 			}
+			call("Master.SubmitTask", &submitMessage, &taskMessage)
+			break
 		default :// wait
 			// 睡眠然后继续
 			time.Sleep(time.Second)
@@ -163,7 +152,7 @@ args : 待调用函数传入参数
 reply : 待调用函数传出参数
 */
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":3333")
+	c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":9999")
 	// c, err := rpc.DialHTTP("unix", "mr-socket")
 	if err != nil {
 		log.Fatal("dialing:", err)
