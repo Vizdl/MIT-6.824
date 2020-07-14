@@ -57,7 +57,7 @@ func main() {
 	//
 
 	sort.Sort(ByKey(intermediate))
-
+	fmt.Printf("键值对的个数有 : %d\n", len(intermediate))
 	oname := "mr-out-0"
 	ofile, _ := os.Create(oname)
 

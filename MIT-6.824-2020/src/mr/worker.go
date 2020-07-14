@@ -77,26 +77,29 @@ func Worker(mapf func(string, string) []KeyValue,
 				intermediates[idx] = append(intermediates[idx], kva[i])
 			}
 			// 创建输出文件表
+			uuu := 0
 			for i := 0; i < taskMessage.NReduce; i++ {
 				file, _ := os.Create(fmt.Sprintf("%s/mr-%d-%d", taskMessage.Dir, taskId, i))
 				encoder := json.NewEncoder(file)
-				defer file.Close()
 				encoder.Encode(intermediates[i])
+				uuu+= len(intermediates[i])
+				file.Close()
 			}
+			
+			fmt.Printf("map 任务号为 : %d, 输出的键值对的个数有 : %d\n", taskId, uuu)
 			call("Master.SubmitTask", &submitMessage, &taskMessage)
 			break
 		case 2: // reduce
 			intermediate := []KeyValue{}
-			// 创建输出文件
-			ofile, _ := os.Create(taskMessage.File)
 			// 遍历目录下的文件,观察其文件名是否符合。
 			dir_list, err := ioutil.ReadDir(taskMessage.Dir)
 			if err != nil {
 				fmt.Println(err)
 				return
 			}
+			times := 0
 			for _, v := range dir_list {
-				match,_ := regexp.MatchString(fmt.Sprintf("mr-[1-9][0-9]*-%d$", taskId),v.Name()) 
+				match,_ := regexp.MatchString(fmt.Sprintf("mr-([1-9][0-9]*|0)-%d$", taskId),v.Name()) /* 正则表达式不能有空格 */
 				if match { // 如若匹配则添加到输入中
 					var temp []KeyValue
 					// 打开这个文件
@@ -108,11 +111,16 @@ func Worker(mapf func(string, string) []KeyValue,
 					} 
 					intermediate = append(intermediate, temp...)
 					file.Close()
+					times++
 				}
 			}
+			fmt.Printf("reduce 任务号为 : %d, 输入文件个数 : %d, 键值对的个数有 : %d\n", taskId, times, len(intermediate))
 			// 排序
 			sort.Sort(ByKey(intermediate))
 			// 分类然后reduce
+			// 创建输出文件
+			ofile, _ := os.Create(taskMessage.File)
+			defer ofile.Close()
 			i := 0
 			for i < len(intermediate) {
 				j := i + 1
