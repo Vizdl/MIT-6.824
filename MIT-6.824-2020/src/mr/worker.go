@@ -46,7 +46,11 @@ func Worker(mapf func(string, string) []KeyValue,
 	for true {
 		application := Application{}
 		taskMessage := TaskMessage{}
-		call("Master.GetTask", &application, &taskMessage) // 请求任务
+		// 请求任务
+		if (!call("Master.GetTask", &application, &taskMessage)){
+			fmt.Println("call Master.GetTask failed")
+			return ;
+		} 
 		// time.Sleep(time.Second * 5)
 		submitMessage := SubmitMessage{taskMessage.TaskCode,uint32(1)}
 		fmt.Printf("taskMessage value :  %v\n", taskMessage)
@@ -87,7 +91,11 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			
 			fmt.Printf("map 任务号为 : %d, 输出的键值对的个数有 : %d\n", taskId, uuu)
-			call("Master.SubmitTask", &submitMessage, &taskMessage)
+			// 提交任务失败,表示master可能宕机了
+			if (!call("Master.SubmitTask", &submitMessage, &taskMessage)){
+				fmt.Println("call Master.SubmitTask failed")
+				return ;
+			}
 			break
 		case 2: // reduce
 			intermediate := []KeyValue{}
@@ -138,7 +146,11 @@ func Worker(mapf func(string, string) []KeyValue,
 
 				i = j
 			}
-			call("Master.SubmitTask", &submitMessage, &taskMessage)
+			// 提交任务失败,表示master可能宕机了
+			if (!call("Master.SubmitTask", &submitMessage, &taskMessage)){
+				fmt.Println("call Master.SubmitTask failed")
+				return ;
+			}
 			break
 		default :// wait
 			// 睡眠然后继续

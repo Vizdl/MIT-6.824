@@ -66,6 +66,19 @@ type Master struct {
 	mu sync.Mutex
 }
 
+/*
+根据当前的状态,获取到对应的任务数组。
+*/
+func (m *Master) GetCurrTaskSArrPairPtr()(*[]*TaskMessage, *[]*TaskMessage){
+	if m.states == MasterMap {
+		fmt.Printf("任务类型为 Map\n")
+		return &m.mapTask, &m.runMapTask
+	}else {
+		fmt.Printf("任务类型为 Reduce\n")
+		return &m.reduceTask, &m.runReduceTask
+	}
+} 
+
 // Your code here -- RPC handlers for the worker to call.
 /*
 GetTask : 提交申请书(Application),获取申请结果。
@@ -83,17 +96,7 @@ func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) er
 		// fmt.Printf("taskMessage value :  %v\n", taskMessage)
 	} else {
 		// 找到第一个没有派发出去的任务。
-		var firstTask *[]*TaskMessage
-		var firstRunTask *[]*TaskMessage
-		if m.states == MasterMap {
-			firstTask = &m.mapTask
-			firstRunTask = &m.runMapTask
-			fmt.Printf("任务类型为 Map\n")
-		}else {
-			firstTask = &m.reduceTask
-			firstRunTask = &m.runReduceTask
-			fmt.Printf("任务类型为 Reduce\n")
-		}
+		firstTask ,firstRunTask := m.GetCurrTaskSArrPairPtr()
 		for i, task := range (*firstTask) {
 			if task != nil {
 				fmt.Printf("第%d次任务分配,分配出去了任务 %d\n", m.unsent, i)
@@ -127,17 +130,7 @@ func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessa
 	if submitMessage.SubmitType == 0 { // 已派发 -> 未派发
 		m.unsent++
 		// 将任务回归到未派发队列中。
-		var firstTask *[]*TaskMessage
-		var firstRunTask *[]*TaskMessage
-		if m.states == MasterMap {
-			firstTask = &m.mapTask
-			firstRunTask = &m.runMapTask
-			fmt.Printf("被提交的任务类型为 Map\n")
-		}else {
-			firstTask = &m.reduceTask
-			firstRunTask = &m.runReduceTask
-			fmt.Printf("被提交的任务类型为 Reduce\n")
-		}
+		firstTask, firstRunTask := m.GetCurrTaskSArrPairPtr()
 		fmt.Printf("任务 %d 失败了\n", taskId)
 		(*firstTask)[taskId] = (*firstRunTask)[taskId] 
 		(*firstRunTask)[taskId] = nil
@@ -189,17 +182,21 @@ func (m *Master) Done() bool {
 	return ret
 }
 
-//
-// create a Master.
-//
 func MakeMaster(files []string, nReduce int) *Master {
 	if nReduce <= 0 {
 		nReduce = 1
 	}
-	
-	m := Master{}
-	m.unsent = len(files)
-	m.uncompleted = len(files)
+	filenum := len(files)
+	m := Master{
+		nReduce :nReduce,
+		states : MasterMap,
+		unsent : filenum,
+		uncompleted : filenum,
+		mapTask : make([]*TaskMessage, filenum),
+		runMapTask : make([]*TaskMessage, filenum),
+		reduceTask : make([]*TaskMessage, nReduce), 
+		runReduceTask : make([]*TaskMessage, nReduce),
+	}
 	// Your code here.
 	// 核查文件系统是否存在files内文件
 	for _, filename := range files {
@@ -211,12 +208,6 @@ func MakeMaster(files []string, nReduce int) *Master {
 		}
 		file.Close()
 	}
-	m.states = MasterMap
-	m.mapTask = make([]*TaskMessage, len(files))
-	m.runMapTask = make([]*TaskMessage, len(files))
-	m.reduceTask = make([]*TaskMessage, nReduce)
-	m.runReduceTask = make([]*TaskMessage, nReduce)
-	m.nReduce = nReduce
 
 	// 设置 map 和 reduce 任务。
 	taskId := uint32(0)
