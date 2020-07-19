@@ -16,7 +16,12 @@ package raft
 //   should send an ApplyMsg to the service (or tester)
 //   in the same server.
 //
-
+/*
+ApplyMsg
+每次一个新条目被提交到日志中时，每个筏对等点
+应该向服务(或测试人员)发送ApplyMsg
+在同一服务器上。
+*/
 import "sync"
 import "sync/atomic"
 import "labrpc"
@@ -37,6 +42,19 @@ import "labrpc"
 // snapshots) on the applyCh; at that point you can add fields to
 // ApplyMsg, but set CommandValid to false for these other uses.
 //
+/*
+当每个筏对等点意识到连续的日志条目是
+提交后，对等方应该发送一个ApplyMsg到服务(或
+通过传递给Make()的applyCh在同一服务器上。
+集
+命令valid为true表示ApplyMsg包含一个新
+提交的日志条目。
+
+在实验3中，你会想要发送其他类型的信息(例如，
+快照)在applyCh上;
+此时，您可以添加字段到
+ApplyMsg，但将命令有效设置为false用于其他用途。
+*/
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
@@ -61,6 +79,7 @@ type Raft struct {
 
 // return currentTerm and whether this server
 // believes it is the leader.
+// 返回 本届任期 和 该服务器是否认为自己是leader。
 func (rf *Raft) GetState() (int, bool) {
 
 	var term int
@@ -74,6 +93,9 @@ func (rf *Raft) GetState() (int, bool) {
 // where it can later be retrieved after a crash and restart.
 // see paper's Figure 2 for a description of what should be persistent.
 //
+/*
+将筏子的持续状态保存为稳定存储，在碰撞后可以重新启动。请参阅paper的图2，了解什么应该是持久的。
+*/
 func (rf *Raft) persist() {
 	// Your code here (2C).
 	// Example:
@@ -115,6 +137,8 @@ func (rf *Raft) readPersist(data []byte) {
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
 //
+// RequestVote RPC参数结构示例。
+// 字段名称必须以大写字母开头!
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
 }
@@ -183,6 +207,11 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // term. the third return value is true if this server believes it is
 // the leader.
 //
+/*
+第一个返回值是命令在提交时出现的索引。
+第二个返回值是本届任期。
+如果该服务器认为自己是leader，则第三个返回值为true。
+*/
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
 	term := -1
@@ -226,11 +255,24 @@ func (rf *Raft) killed() bool {
 // for any long-running work.
 //
 /*
-type ClientEnd struct {
-	endname interface{}   // this end-point's name
-	ch      chan reqMsg   // copy of Network.endCh
-	done    chan struct{} // closed when Network is cleaned up
-}
+服务或测试人员希望创建一个Raft服务器。
+所有Raft服务器(包括这个服务器)的端口都在peer[]中。
+此服务器的端口是peer[me]。所有服务器的对等点[]数组具有相同的顺序。
+persister是此服务器保存其持久状态的地方，最初还保存最近保存的状态(如果有的话)。
+applyCh是测试者或服务期望筏发送ApplyMsg消息的通道，
+Make()必须快速返回，因此它应该为任何长时间运行的工作启动goroutines。
+*/
+/*
+制造出一个 Raft 服务器
+填写RequestVoteArgs和 RequestVoteReply结构。
+修改 Make()以创建一个后台goroutine，
+该后台goroutine将在有一段时间没有收到其他对等方的请求时
+通过发出RequestVote RPC来定期启动领导者选举。
+这样，同伴将了解谁是领导者（如果已经有领导者），或者成为领导者本身。
+实现RequestVote() RPC处理程序，以便服务器相互投票。
+
+思考 : 还是定时器问题.
+如何判断谁是领导呢?
 */
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
