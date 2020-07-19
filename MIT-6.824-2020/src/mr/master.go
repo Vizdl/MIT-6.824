@@ -19,10 +19,7 @@ import "fmt"
 	第一次限时为 x 秒,派发出去两次如若都未完成,则限定改为 x*2秒。以此类推。
 如若已派发的任务其实还在进行,但是还需要一点时间,而这个时候按照判定将其视为失败。但之后该worker完成了,来提交任务怎么办?
 	1) 避免时间差,假设 master 任务 100ms 超时, 而 worker 则认为 95ms 内没完成就是超时。 这样因时间上的精度问题而导致双方认知不一致的问题。
-	但是也存在网络状况不佳后导致的多次发送未成功超时的问题,那怎么办？
-
-	(并且区时间也要一致且以master为准,避免因区域跨度大导致的时差问题)
-	2) 如若给任务记录一个分配给某个worker则 牵涉到唯一标识符的问题,如若唯一标识某一个worker(需要考虑到这个 worker甚至可能重启了(前世今生))?
+	然后设置发送超时时间,达成 处理时间 + 超时时间 + 定时器的最大误差 * 2 < 限定超时时间, 就可以确保 master worker双方达成一致。
 */
 
 /*
@@ -87,9 +84,12 @@ func (m *Master) GetCurrTaskSArrPairPtr()(*[]*TaskMessage, *[]*TaskMessage){
 	if m.states == MasterMap {
 		fmt.Printf("任务类型为 Map\n")
 		return &m.mapTask, &m.runMapTask
-	}else {
+	}else if m.states == MasterReduce{
 		fmt.Printf("任务类型为 Reduce\n")
 		return &m.reduceTask, &m.runReduceTask
+	}else {
+		fmt.Printf("错误的任务类型,当前master处于完成或者失败状态。\n")
+		return nil, nil
 	}
 } 
 
