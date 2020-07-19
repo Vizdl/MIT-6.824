@@ -225,6 +225,13 @@ func (rf *Raft) killed() bool {
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
 //
+/*
+type ClientEnd struct {
+	endname interface{}   // this end-point's name
+	ch      chan reqMsg   // copy of Network.endCh
+	done    chan struct{} // closed when Network is cleaned up
+}
+*/
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}

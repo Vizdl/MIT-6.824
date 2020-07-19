@@ -19,6 +19,11 @@ import "sync"
 // (much more than the paper's range of timeouts).
 const RaftElectionTimeout = 1000 * time.Millisecond
 
+
+/*
+go test : 执行单个*_test.go文件下的所有方法
+testing.T : testing 里面的。
+*/
 func TestInitialElection2A(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false)
