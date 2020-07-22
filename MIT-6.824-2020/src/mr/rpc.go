@@ -39,5 +39,9 @@ type TaskMessage struct{
 	File string 
 	Dir string 
 	NReduce int 
+	/*
+	任务被分配出去的时间戳,只有被分配时出去才有意义。
+	*/
+	TimeStamp int64
 }
 

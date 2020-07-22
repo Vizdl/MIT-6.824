@@ -22,6 +22,15 @@ import "fmt"
 	然后设置发送超时时间,达成 处理时间 + 超时时间 + 定时器的最大误差 * 2 < 限定超时时间, 就可以确保 master worker双方达成一致。
 */
 
+
+/*
+定时任务go语言具体实现方案
+	master : 
+		每次派发出去任务,都做一个定时任务,且这个定时任务有两个管道,分别代表两种事件发生 : 任务成功与任务超时。
+	worker : 
+
+*/
+
 /*
 对于一个任务有三种状态 : 
 1) 未派发
@@ -44,6 +53,18 @@ MasterFailed : 异常初始化后
 什么时候 master 认定 任务失败?
 	1) 任务长时间未完成
 	2) 任务被提交的时候返回为失败。
+*/
+
+/*
+事件接口设计 ：
+	事件初始化 : go startTaskEvenetMonitor
+	事件发生 : 
+		超时事件 : 由定时器定时发生。
+		完成事件 : 在提交任务处提交。
+	参与的协程 : 
+		1) 定时器协程
+		2) rpc提交任务协程
+		3) rpc申请任务协程
 */
 
 /*
@@ -73,14 +94,15 @@ type Master struct {
 	runMapTask[]*TaskMessage /* 已分配出去的mapTask */
 	reduceTask[]*TaskMessage
 	runReduceTask[]*TaskMessage /* 已分配出去的reduceTask */
-	// 当前master需要有锁来保护数据,因为存在竞态。
+	completedEvents[]chan struct{} /* 任务完成事件组 */
+	timeoutLimits []int64		/* 单位:纳秒,每次未完成,都将超时时间提升2数倍 */
 	mu sync.Mutex
 }
-
+/////////////////////////////////////////////////////////////////////////////////////// PRIVATE ///////////////////////////////////////////////////////////////////////////////////////
 /*
 根据当前的状态,获取到对应的任务数组。
 */
-func (m *Master) GetCurrTaskSArrPairPtr()(*[]*TaskMessage, *[]*TaskMessage){
+func (m *Master) getCurrTaskSArrPairPtr()(*[]*TaskMessage, *[]*TaskMessage){
 	if m.states == MasterMap {
 		fmt.Printf("任务类型为 Map\n")
 		return &m.mapTask, &m.runMapTask
@@ -93,6 +115,36 @@ func (m *Master) GetCurrTaskSArrPairPtr()(*[]*TaskMessage, *[]*TaskMessage){
 	}
 } 
 
+/*
+私有函数 : 取消已经派送的任务。不加锁。
+*/
+func (m *Master) cancelIssuedTask (taskId int){
+	m.unsent++
+	// 将任务回归到未派发队列中。
+	firstTask, firstRunTask := m.getCurrTaskSArrPairPtr()
+	fmt.Printf("任务 %d 失败了\n", taskId)
+	(*firstTask)[taskId] = (*firstRunTask)[taskId] 
+	(*firstRunTask)[taskId] = nil
+}
+
+/*
+任务定时器 : 通过开启一个 goroutine 利用 select 来进行监听 '事件(管道)'来达成对事件的响应。
+输入 : 任务号与任务超时时刻的时间戳。
+*/
+func (m *Master) startTaskMonitor (taskId int, timeout int64){
+	// 设置定时器
+	timeoutEvent := time.NewTimer((time.Now().UnixNano() - timeout) * time.Nanosecond)
+	select {
+	case <-timeoutEvent: // 如若任务taskId超时事件先发生。
+	case <-m.completedEvents[taskId]: // 如若任务taskId完成事件先发生。
+	}
+}
+
+
+func (m *Master) cancelTaskTimer (taskId int){
+	
+}
+/////////////////////////////////////////////////////////////////////////////////////// PUBLIC ///////////////////////////////////////////////////////////////////////////////////////
 // Your code here -- RPC handlers for the worker to call.
 /*
 GetTask : 提交申请书(Application),获取申请结果。
@@ -102,25 +154,21 @@ taskMessage : 如若申请失败为nil,申请者应该退出。否则应该是�
 func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// 如若任务完全派出
 	if m.unsent <= 0 {
-		temp := TaskMessage{uint32(0), "111", "222", m.nReduce}
+		temp := TaskMessage{uint32(0), "", "", m.nReduce}
 		*taskMessage = *(&temp)
-		// fmt.Println("让worker回去睡觉")
-		// fmt.Printf("taskMessage value :  %v\n", taskMessage)
 	} else {
-		// 找到第一个没有派发出去的任务。
-		firstTask ,firstRunTask := m.GetCurrTaskSArrPairPtr()
+		firstTask ,firstRunTask := m.getCurrTaskSArrPairPtr()
 		for i, task := range (*firstTask) {
 			if task != nil {
 				fmt.Printf("第%d次任务分配,分配出去了任务 %d\n", m.unsent, i)
+				// 设置超时时间,设置定时器。
+				*task.TimeStamp = time.Now().UnixNano() + m.timeoutLimits
 				*taskMessage = *task
 				fmt.Printf("taskMessage value :  %v\n", taskMessage)
 				(*firstRunTask)[i] = task
-				// 睡眠然后继续
-				// time.Sleep(10)
 				(*firstTask)[i] = nil
-				// *taskMessage = *(*firstRunTask)[i]
+
 				break;
 			}
 		}
@@ -128,6 +176,7 @@ func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) er
 	}
 	return nil;
 }
+
 
 /*
 SubmitTask : 提交任务,告知master当前自己的任务状态(可能成功也可能失败)。
@@ -142,12 +191,7 @@ func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessa
 	taskId := (submitMessage.TaskCode << 2) >> 2
 	fmt.Printf("submitMessage value :  %v\n", submitMessage)
 	if submitMessage.SubmitType == 0 { // 已派发 -> 未派发
-		m.unsent++
-		// 将任务回归到未派发队列中。
-		firstTask, firstRunTask := m.GetCurrTaskSArrPairPtr()
-		fmt.Printf("任务 %d 失败了\n", taskId)
-		(*firstTask)[taskId] = (*firstRunTask)[taskId] 
-		(*firstRunTask)[taskId] = nil
+		cancelIssuedTask(taskId)
 	}else if submitMessage.SubmitType == 1 { // 已派发 -> 已完成
 		m.uncompleted--
 	}else {
@@ -226,14 +270,24 @@ func MakeMaster(files []string, nReduce int) *Master {
 	// 设置 map 和 reduce 任务。
 	taskId := uint32(0)
 	for _, filename := range files {
-		taskMessage := TaskMessage{(1 << 30) + taskId, filename, ".", nReduce}
+		taskMessage := TaskMessage{
+			TaskCode ： (1 << 30) + taskId, 
+			File ： filename, 
+			Dir ： ".", 
+			NReduce ： nReduce
+		}
 		m.mapTask[taskId] = &taskMessage
 		m.runMapTask[taskId] = nil;
 		taskId++
 	}
 	taskId = uint32(0)
 	for i := 0; i < nReduce; i++{
-		taskMessage := TaskMessage{(2 << 30) + taskId, fmt.Sprintf("mr-out%d", taskId), ".", nReduce}
+		taskMessage := TaskMessage{
+			TaskCode ： (2 << 30) + taskId,
+			File ： fmt.Sprintf("mr-out%d", taskId),
+			Dir ： ".", 
+			NReduce ： nReduce
+		}
 		m.reduceTask[i] = &taskMessage
 		m.runReduceTask[i] = nil;
 		taskId++
