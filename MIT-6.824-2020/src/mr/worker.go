@@ -51,7 +51,11 @@ func Worker(mapf func(string, string) []KeyValue,
 			fmt.Println("call Master.GetTask failed")
 			return ;
 		} 
-		// time.Sleep(time.Second * 5)
+		// 如若收到任务就超时了。
+		if (taskMessage.TimeStamp >= time.Now().UnixNano()){
+			fmt.Println("收到任务就超时了。")
+			continue
+		}
 		submitMessage := SubmitMessage{taskMessage.TaskCode,uint32(1)}
 		fmt.Printf("taskMessage value :  %v\n", taskMessage)
 		taskType := taskMessage.TaskCode >> 30;
@@ -89,7 +93,11 @@ func Worker(mapf func(string, string) []KeyValue,
 				uuu+= len(intermediates[i])
 				file.Close()
 			}
-			
+			// 如若提交任务前就超时了。
+			if (taskMessage.TimeStamp >= time.Now().UnixNano()){
+				fmt.Println("提交任务前就超时了。")
+				continue
+			}
 			fmt.Printf("map 任务号为 : %d, 输出的键值对的个数有 : %d\n", taskId, uuu)
 			// 提交任务失败,表示master可能宕机了
 			if (!call("Master.SubmitTask", &submitMessage, &taskMessage)){
@@ -145,6 +153,11 @@ func Worker(mapf func(string, string) []KeyValue,
 				fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
 
 				i = j
+			}
+			// 如若提交任务前就超时了。
+			if (taskMessage.TimeStamp >= time.Now().UnixNano()){
+				fmt.Println("提交任务前就超时了。")
+				continue
 			}
 			// 提交任务失败,表示master可能宕机了
 			if (!call("Master.SubmitTask", &submitMessage, &taskMessage)){

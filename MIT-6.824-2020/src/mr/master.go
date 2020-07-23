@@ -8,7 +8,7 @@ import "net/rpc"
 import "net/http"
 import "sync"
 import "fmt"
-// import "time"
+import "time"
 
 
 /*
@@ -98,6 +98,14 @@ type Master struct {
 	timeoutLimits []int64		/* 单位:纳秒,每次未完成,都将超时时间提升2数倍 */
 	mu sync.Mutex
 }
+/////////////////////////////////////////////=///////////////////////////////////// 静态lib函数 ////////////////////////////////////////////////////////////////////////////////////////
+func Max(x, y int) int {
+    if x < y {
+        return y
+    }
+    return x
+}
+
 /////////////////////////////////////////////////////////////////////////////////////// PRIVATE ///////////////////////////////////////////////////////////////////////////////////////
 /*
 根据当前的状态,获取到对应的任务数组。
@@ -118,31 +126,35 @@ func (m *Master) getCurrTaskSArrPairPtr()(*[]*TaskMessage, *[]*TaskMessage){
 /*
 私有函数 : 取消已经派送的任务。不加锁。
 */
-func (m *Master) cancelIssuedTask (taskId int){
+func (m *Master) cancelIssuedTask (taskId uint32){
 	m.unsent++
 	// 将任务回归到未派发队列中。
 	firstTask, firstRunTask := m.getCurrTaskSArrPairPtr()
 	fmt.Printf("任务 %d 失败了\n", taskId)
 	(*firstTask)[taskId] = (*firstRunTask)[taskId] 
 	(*firstRunTask)[taskId] = nil
+	return 
 }
 
 /*
 任务定时器 : 通过开启一个 goroutine 利用 select 来进行监听 '事件(管道)'来达成对事件的响应。
 输入 : 任务号与任务超时时刻的时间戳。
 */
-func (m *Master) startTaskMonitor (taskId int, timeout int64){
+func (m *Master) startTaskMonitor (taskId uint32, timeout int64){
 	// 设置定时器
-	timeoutEvent := time.NewTimer((time.Now().UnixNano() - timeout) * time.Nanosecond)
+	timeoutEvent := time.After(time.Duration(time.Now().UnixNano() - timeout) * time.Nanosecond)
 	select {
 	case <-timeoutEvent: // 如若任务taskId超时事件先发生。
+		fmt.Printf("EVENT =========== 任务 %d timeout.\n",taskId)
 	case <-m.completedEvents[taskId]: // 如若任务taskId完成事件先发生。
+		fmt.Printf("EVENT =========== 任务 %d 完成.\n",taskId)
 	}
+	return 
 }
 
 
 func (m *Master) cancelTaskTimer (taskId int){
-	
+	return 
 }
 /////////////////////////////////////////////////////////////////////////////////////// PUBLIC ///////////////////////////////////////////////////////////////////////////////////////
 // Your code here -- RPC handlers for the worker to call.
@@ -155,7 +167,12 @@ func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.unsent <= 0 {
-		temp := TaskMessage{uint32(0), "", "", m.nReduce}
+		temp := TaskMessage{
+			TaskCode : uint32(0),
+			File : "",
+			Dir : "", 
+			NReduce : m.nReduce,
+		}
 		*taskMessage = *(&temp)
 	} else {
 		firstTask ,firstRunTask := m.getCurrTaskSArrPairPtr()
@@ -163,12 +180,14 @@ func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) er
 			if task != nil {
 				fmt.Printf("第%d次任务分配,分配出去了任务 %d\n", m.unsent, i)
 				// 设置超时时间,设置定时器。
-				*task.TimeStamp = time.Now().UnixNano() + m.timeoutLimits
+				(*task).TimeStamp = time.Now().UnixNano() + m.timeoutLimits[i]
 				*taskMessage = *task
 				fmt.Printf("taskMessage value :  %v\n", taskMessage)
 				(*firstRunTask)[i] = task
 				(*firstTask)[i] = nil
-
+				// 开启倒计时任务。 这里需谨慎考虑边界条件。
+				m.completedEvents[i] = make(chan struct{})
+				go m.startTaskMonitor(uint32(i), (*task).TimeStamp)
 				break;
 			}
 		}
@@ -191,8 +210,9 @@ func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessa
 	taskId := (submitMessage.TaskCode << 2) >> 2
 	fmt.Printf("submitMessage value :  %v\n", submitMessage)
 	if submitMessage.SubmitType == 0 { // 已派发 -> 未派发
-		cancelIssuedTask(taskId)
+		m.cancelIssuedTask(taskId)
 	}else if submitMessage.SubmitType == 1 { // 已派发 -> 已完成
+		close(m.completedEvents[taskId]); // 通知事件完成。
 		m.uncompleted--
 	}else {
 	}
@@ -244,17 +264,26 @@ func MakeMaster(files []string, nReduce int) *Master {
 	if nReduce <= 0 {
 		nReduce = 1
 	}
-	filenum := len(files)
+	nMap := len(files)
 	m := Master{
-		nReduce :nReduce,
+		nReduce : nReduce,
 		states : MasterMap,
-		unsent : filenum,
-		uncompleted : filenum,
-		mapTask : make([]*TaskMessage, filenum),
-		runMapTask : make([]*TaskMessage, filenum),
+		unsent : nMap,
+		uncompleted : nMap,
+		mapTask : make([]*TaskMessage, nMap),
+		runMapTask : make([]*TaskMessage, nMap),
 		reduceTask : make([]*TaskMessage, nReduce), 
 		runReduceTask : make([]*TaskMessage, nReduce),
+		completedEvents : make([]chan struct{}, Max(nMap, nReduce)),
+		timeoutLimits : make([]int64, Max(nMap, nReduce)),
 	}
+
+	// 设置初始timeout
+	for i := 0; i < len(m.timeoutLimits); i++ {
+		m.timeoutLimits[i] = 1000000
+	}
+	
+
 	// Your code here.
 	// 核查文件系统是否存在files内文件
 	for _, filename := range files {
@@ -271,10 +300,10 @@ func MakeMaster(files []string, nReduce int) *Master {
 	taskId := uint32(0)
 	for _, filename := range files {
 		taskMessage := TaskMessage{
-			TaskCode ： (1 << 30) + taskId, 
-			File ： filename, 
-			Dir ： ".", 
-			NReduce ： nReduce
+			TaskCode : (1 << 30) + taskId, 
+			File : filename, 
+			Dir : ".", 
+			NReduce : nReduce,
 		}
 		m.mapTask[taskId] = &taskMessage
 		m.runMapTask[taskId] = nil;
@@ -283,10 +312,10 @@ func MakeMaster(files []string, nReduce int) *Master {
 	taskId = uint32(0)
 	for i := 0; i < nReduce; i++{
 		taskMessage := TaskMessage{
-			TaskCode ： (2 << 30) + taskId,
-			File ： fmt.Sprintf("mr-out%d", taskId),
-			Dir ： ".", 
-			NReduce ： nReduce
+			TaskCode : (2 << 30) + taskId,
+			File : fmt.Sprintf("mr-out%d", taskId),
+			Dir : ".", 
+			NReduce : nReduce,
 		}
 		m.reduceTask[i] = &taskMessage
 		m.runReduceTask[i] = nil;
