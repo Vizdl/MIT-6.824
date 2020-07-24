@@ -5,7 +5,7 @@ import "log"
 import "net"
 import "os"
 import "net/rpc"
-import "net/http"
+// import "net/http"
 import "sync"
 import "fmt"
 import "time"
@@ -78,10 +78,18 @@ const (
 	MasterFailed
 )
 
+/*
+服务器的状态随着 rpc调用 不断发生变更。
+*/
 type Master struct {
 	// Your definitions here.
-	nReduce int
-	states MasterStatus
+	nReduce int // 多线程读,初始化时才有写。 不需要锁保护。
+	completedEvents[]chan struct{} /* 任务完成事件组,管道不需要锁保护,因为两个线程调用的是两段,并且是线程安全的。*/
+	mu sync.Mutex				// 用来保存服务器状态的。
+
+
+	/* 以下都是服务器的状态 */
+	states MasterStatus /* 几乎所有线程都有读写 */
 	unsent int /* 当前阶段未派出的任务数量 */
 	uncompleted int /* 未完成的任务数量 */
 	/*
@@ -94,9 +102,7 @@ type Master struct {
 	runMapTask[]*TaskMessage /* 已分配出去的mapTask */
 	reduceTask[]*TaskMessage
 	runReduceTask[]*TaskMessage /* 已分配出去的reduceTask */
-	completedEvents[]chan struct{} /* 任务完成事件组 */
 	timeoutLimits []int64		/* 单位:纳秒,每次未完成,都将超时时间提升2数倍 */
-	mu sync.Mutex
 }
 /////////////////////////////////////////////=///////////////////////////////////// 静态lib函数 ////////////////////////////////////////////////////////////////////////////////////////
 func Max(x, y int) int {
@@ -124,40 +130,62 @@ func (m *Master) getCurrTaskSArrPairPtr()(*[]*TaskMessage, *[]*TaskMessage){
 } 
 
 /*
-私有函数 : 取消已经派送的任务。不加锁。
+私有函数 : 取消已经派送的任务。内部不加锁。但是函数外部要加锁。
 */
 func (m *Master) cancelIssuedTask (taskId uint32){
 	m.unsent++
 	// 将任务回归到未派发队列中。
 	firstTask, firstRunTask := m.getCurrTaskSArrPairPtr()
-	fmt.Printf("任务 %d 失败了\n", taskId)
 	(*firstTask)[taskId] = (*firstRunTask)[taskId] 
 	(*firstRunTask)[taskId] = nil
+	// 增加超时时长
+	m.timeoutLimits[taskId] <<= 1
 	return 
+}
+
+func (m *Master) finishIssuedTask (taskId uint32){
+	m.uncompleted--// 状态变化
+	if m.uncompleted == 0 { // 当前阶段任务全部完成了。
+		if m.states == MasterMap {
+			m.states = MasterReduce
+			m.unsent = m.nReduce
+			m.uncompleted = m.nReduce
+		}else if m.states == MasterReduce {
+			m.states = MasterComplete;
+			fmt.Printf("==================== 所有任务完成 ====================\n")
+		}else {
+
+		}
+	}
 }
 
 /*
 任务定时器 : 通过开启一个 goroutine 利用 select 来进行监听 '事件(管道)'来达成对事件的响应。
 输入 : 任务号与任务超时时刻的时间戳。
 */
-func (m *Master) startTaskMonitor (taskId uint32, timeout int64){
-	// 设置定时器
-	timeoutEvent := time.After(time.Duration(time.Now().UnixNano() - timeout) * time.Nanosecond)
+func (m *Master) taskMonitor (taskId uint32, timeout int64){
+	// 设置定时器,经过实验,如果limit是负数就直接事件发生。
+	limit:= time.Duration(timeout - time.Now().UnixNano()) * time.Nanosecond
+	timeoutEvent := time.NewTimer(limit)
 	select {
-	case <-timeoutEvent: // 如若任务taskId超时事件先发生。
-		fmt.Printf("EVENT =========== 任务 %d timeout.\n",taskId)
+	case <-timeoutEvent.C: // 如若任务taskId超时事件先发生。
+		fmt.Printf("EVENT =========== 任务 %d 超时, limit : %d.\n",taskId,limit)
+		m.mu.Lock()
+		m.cancelIssuedTask(taskId)
+		m.mu.Unlock()
 	case <-m.completedEvents[taskId]: // 如若任务taskId完成事件先发生。
 		fmt.Printf("EVENT =========== 任务 %d 完成.\n",taskId)
+		m.mu.Lock()
+		m.finishIssuedTask(taskId)
+		m.mu.Unlock()
+		timeoutEvent.Stop()
 	}
+	fmt.Printf("EVENT =========== 任务 %d 监听结束\n",taskId)
 	return 
 }
 
 
-func (m *Master) cancelTaskTimer (taskId int){
-	return 
-}
 /////////////////////////////////////////////////////////////////////////////////////// PUBLIC ///////////////////////////////////////////////////////////////////////////////////////
-// Your code here -- RPC handlers for the worker to call.
 /*
 GetTask : 提交申请书(Application),获取申请结果。
 返回值 :
@@ -178,16 +206,12 @@ func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) er
 		firstTask ,firstRunTask := m.getCurrTaskSArrPairPtr()
 		for i, task := range (*firstTask) {
 			if task != nil {
-				fmt.Printf("第%d次任务分配,分配出去了任务 %d\n", m.unsent, i)
-				// 设置超时时间,设置定时器。
 				(*task).TimeStamp = time.Now().UnixNano() + m.timeoutLimits[i]
 				*taskMessage = *task
-				fmt.Printf("taskMessage value :  %v\n", taskMessage)
 				(*firstRunTask)[i] = task
 				(*firstTask)[i] = nil
-				// 开启倒计时任务。 这里需谨慎考虑边界条件。
-				m.completedEvents[i] = make(chan struct{})
-				go m.startTaskMonitor(uint32(i), (*task).TimeStamp)
+				// 大概估计 : 一次取余运算需要五个时钟周期(50ns)。
+				go m.taskMonitor(uint32(i), (*task).TimeStamp)
 				break;
 			}
 		}
@@ -204,31 +228,15 @@ SubmitTask : 提交任务,告知master当前自己的任务状态(可能成功�
 已派发 -> 未派发
 */
 func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessage)error{
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	// taskType := submitMessage.TaskCode >> 30;
 	taskId := (submitMessage.TaskCode << 2) >> 2
 	fmt.Printf("submitMessage value :  %v\n", submitMessage)
-	if submitMessage.SubmitType == 0 { // 已派发 -> 未派发
-		m.cancelIssuedTask(taskId)
-	}else if submitMessage.SubmitType == 1 { // 已派发 -> 已完成
-		close(m.completedEvents[taskId]); // 通知事件完成。
-		m.uncompleted--
-	}else {
-	}
-
-	// 状态变化
-	if m.uncompleted == 0 { // 当前阶段任务全部完成了。
-		if m.states == MasterMap {
-			m.states = MasterReduce
-			m.unsent = m.nReduce
-			m.uncompleted = m.nReduce
-		}else if m.states == MasterReduce {
-			m.states = MasterComplete;
-			fmt.Printf("==================== 所有任务完成 ====================\n")
-		}else {
-
-		}
+	switch submitMessage.SubmitType{
+	case 1 :
+		m.completedEvents[taskId] <- struct{}{} // 通知事件完成。向一个未监听的
+		break
+	default :
+		fmt.Printf("SubmitTask : submitMessage.SubmitType error")
 	}
 	return nil;
 }
@@ -238,15 +246,13 @@ func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessa
 // start a thread that listens for RPCs from worker.go
 //
 func (m *Master) server() {
-	rpc.Register(m)
-	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", ":9999")
-	// os.Remove("mr-socket")
-	// l, e := net.Listen("unix", "mr-socket")
+	newServer := rpc.NewServer()
+    newServer.Register(m)
+    l, e := net.Listen("tcp", "127.0.0.1:1245") 
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
-	go http.Serve(l, nil) /* 创建goroutine去运行该函数 */
+    go newServer.Accept(l)
 }
 
 //
@@ -277,18 +283,17 @@ func MakeMaster(files []string, nReduce int) *Master {
 		completedEvents : make([]chan struct{}, Max(nMap, nReduce)),
 		timeoutLimits : make([]int64, Max(nMap, nReduce)),
 	}
-
+	for i := 0; i < len(m.completedEvents); i++{
+		m.completedEvents[i] = make(chan struct{})
+	}
 	// 设置初始timeout
 	for i := 0; i < len(m.timeoutLimits); i++ {
-		m.timeoutLimits[i] = 1000000
+		m.timeoutLimits[i] = 100000000 // 100 000 000会有几个任务完不成。
 	}
 	
-
-	// Your code here.
 	// 核查文件系统是否存在files内文件
 	for _, filename := range files {
 		file, err := os.Open(filename)
-		// fmt.Printf(filename + "\n")
 		if err != nil {
 			m.states = MasterFailed
 			log.Fatalf("cannot open %v", filename)

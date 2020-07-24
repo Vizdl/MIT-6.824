@@ -2,6 +2,7 @@ package mr
 
 import "fmt"
 import "log"
+import "net"
 import "net/rpc"
 import "hash/fnv"
 import "os"
@@ -47,15 +48,10 @@ func Worker(mapf func(string, string) []KeyValue,
 		application := Application{}
 		taskMessage := TaskMessage{}
 		// 请求任务
-		if (!call("Master.GetTask", &application, &taskMessage)){
+		if (!call("Master.GetTask", &application, &taskMessage,0)){
 			fmt.Println("call Master.GetTask failed")
 			return ;
 		} 
-		// 如若收到任务就超时了。
-		if (taskMessage.TimeStamp >= time.Now().UnixNano()){
-			fmt.Println("收到任务就超时了。")
-			continue
-		}
 		submitMessage := SubmitMessage{taskMessage.TaskCode,uint32(1)}
 		fmt.Printf("taskMessage value :  %v\n", taskMessage)
 		taskType := taskMessage.TaskCode >> 30;
@@ -63,6 +59,11 @@ func Worker(mapf func(string, string) []KeyValue,
 		fmt.Printf("taskMessage.TaskCode : %x, taskType : %x, taskId ： %x\n",taskMessage.TaskCode,taskType, taskId)
 		switch taskType {
 		case 1:
+			// 如若收到任务就超时了。
+			if (taskMessage.TimeStamp <= time.Now().UnixNano()){
+				fmt.Println("收到任务就超时了。")
+				continue
+			}
 			// 打开输入文件
 			ofile, err := os.Open(taskMessage.File)
 			if err != nil {
@@ -80,7 +81,6 @@ func Worker(mapf func(string, string) []KeyValue,
 				intermediates = append(intermediates, []KeyValue{})
 			}
 			for i := 0; i < len(kva); i++{
-				// fmt.Fprintf(encoders[ihash(kva[i].Key)], "%v %v\n", kva[i].Key, kva[i].Value)
 				idx := ihash(kva[i].Key) % taskMessage.NReduce
 				intermediates[idx] = append(intermediates[idx], kva[i])
 			}
@@ -94,18 +94,23 @@ func Worker(mapf func(string, string) []KeyValue,
 				file.Close()
 			}
 			// 如若提交任务前就超时了。
-			if (taskMessage.TimeStamp >= time.Now().UnixNano()){
+			if (taskMessage.TimeStamp <= time.Now().UnixNano()){
 				fmt.Println("提交任务前就超时了。")
 				continue
 			}
 			fmt.Printf("map 任务号为 : %d, 输出的键值对的个数有 : %d\n", taskId, uuu)
 			// 提交任务失败,表示master可能宕机了
-			if (!call("Master.SubmitTask", &submitMessage, &taskMessage)){
+			if (!call("Master.SubmitTask", &submitMessage, &taskMessage, taskMessage.TimeStamp)){
 				fmt.Println("call Master.SubmitTask failed")
 				return ;
 			}
 			break
 		case 2: // reduce
+			// 如若收到任务就超时了。
+			if (taskMessage.TimeStamp <= time.Now().UnixNano()){
+				fmt.Println("收到任务就超时了。")
+				continue
+			}
 			intermediate := []KeyValue{}
 			// 遍历目录下的文件,观察其文件名是否符合。
 			dir_list, err := ioutil.ReadDir(taskMessage.Dir)
@@ -155,12 +160,12 @@ func Worker(mapf func(string, string) []KeyValue,
 				i = j
 			}
 			// 如若提交任务前就超时了。
-			if (taskMessage.TimeStamp >= time.Now().UnixNano()){
+			if (taskMessage.TimeStamp <= time.Now().UnixNano() + 1000000){
 				fmt.Println("提交任务前就超时了。")
 				continue
 			}
 			// 提交任务失败,表示master可能宕机了
-			if (!call("Master.SubmitTask", &submitMessage, &taskMessage)){
+			if (!call("Master.SubmitTask", &submitMessage, &taskMessage, taskMessage.TimeStamp)){
 				fmt.Println("call Master.SubmitTask failed")
 				return ;
 			}
@@ -173,34 +178,29 @@ func Worker(mapf func(string, string) []KeyValue,
 	}
 }
 
-
-/*
-send an RPC request to the master, wait for the response.
-usually returns true.
-returns false if something goes wrong.
-函数功能 : 调用 master 上的函数。
-input :
-rpcname : 待调用函数名
-args : 待调用函数传入参数
-reply : 待调用函数传出参数
-*/
-func call(rpcname string, args interface{}, reply interface{}) bool {
-	c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":9999")
-	// c, err := rpc.DialHTTP("unix", "mr-socket")
+func call(rpcname string, args interface{}, reply interface{}, timeout int64) bool {
+	limit := time.Duration(timeout - time.Now().UnixNano()) * time.Nanosecond
+	if timeout == 0{
+		limit = 0
+	}
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:1245", limit)
 	if err != nil {
-		log.Fatal("dialing:", err)
+		fmt.Println("TCP连接超时")
+		return false // 任务超时
 	}
-	/* 
-	defer语句延迟执行一个函数，该函数被推迟到当包含它的程序返回时
-	（包含它的函数 执行了return语句/运行到函数结尾自动返回/对应的goroutine panic）执行。 
-	*/
-	defer c.Close()
+	defer conn.Close()
 
-	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
+	if timeout != 0{
+    	conn.SetReadDeadline(time.Unix(timeout, 0))
 	}
 
-	fmt.Println(err)
-	return false
+    client := rpc.NewClient(conn)
+	defer client.Close()
+	
+	err = client.Call(rpcname, args, reply)
+	if err != nil { // 任务超时
+		fmt.Println("RCP超时")
+		return false
+	}
+	return true
 }
