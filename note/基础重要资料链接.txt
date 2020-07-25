@@ -1,0 +1,3 @@
+raft可视化 : http://thesecretlivesofdata.com/raft/
+课程安排大纲 : https://pdos.csail.mit.edu/6.824/schedule.html
+raft lab : https://pdos.csail.mit.edu/6.824/labs/lab-raft.html

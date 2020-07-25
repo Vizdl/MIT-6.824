@@ -48,20 +48,19 @@ func Worker(mapf func(string, string) []KeyValue,
 		application := Application{}
 		taskMessage := TaskMessage{}
 		// 请求任务
-		if (!call("Master.GetTask", &application, &taskMessage,0)){
-			fmt.Println("call Master.GetTask failed")
-			return ;
+		if (!call("Master.GetTask", &application, &taskMessage, false, 0)){
+			fmt.Println("call Master.GetTask failed.程序退出。")
+			return 
 		} 
 		submitMessage := SubmitMessage{taskMessage.TaskCode,uint32(1)}
-		fmt.Printf("taskMessage value :  %v\n", taskMessage)
 		taskType := taskMessage.TaskCode >> 30;
 		taskId := (taskMessage.TaskCode << 2) >> 2
-		fmt.Printf("taskMessage.TaskCode : %x, taskType : %x, taskId ： %x\n",taskMessage.TaskCode,taskType, taskId)
+		fmt.Printf("taskMessage : %v, taskType : %x, taskId ： %x\n",taskMessage ,taskType, taskId)
 		switch taskType {
 		case 1:
 			// 如若收到任务就超时了。
 			if (taskMessage.TimeStamp <= time.Now().UnixNano()){
-				fmt.Println("收到任务就超时了。")
+				fmt.Println("map %d 收到任务就超时了。",taskId)
 				continue
 			}
 			// 打开输入文件
@@ -93,22 +92,11 @@ func Worker(mapf func(string, string) []KeyValue,
 				uuu+= len(intermediates[i])
 				file.Close()
 			}
-			// 如若提交任务前就超时了。
-			if (taskMessage.TimeStamp <= time.Now().UnixNano()){
-				fmt.Println("提交任务前就超时了。")
-				continue
-			}
-			fmt.Printf("map 任务号为 : %d, 输出的键值对的个数有 : %d\n", taskId, uuu)
-			// 提交任务失败,表示master可能宕机了
-			if (!call("Master.SubmitTask", &submitMessage, &taskMessage, taskMessage.TimeStamp)){
-				fmt.Println("call Master.SubmitTask failed")
-				return ;
-			}
 			break
 		case 2: // reduce
 			// 如若收到任务就超时了。
 			if (taskMessage.TimeStamp <= time.Now().UnixNano()){
-				fmt.Println("收到任务就超时了。")
+				fmt.Println("reduce %d 收到任务就超时了。",taskId)
 				continue
 			}
 			intermediate := []KeyValue{}
@@ -159,41 +147,39 @@ func Worker(mapf func(string, string) []KeyValue,
 
 				i = j
 			}
-			// 如若提交任务前就超时了。
-			if (taskMessage.TimeStamp <= time.Now().UnixNano() + 1000000){
-				fmt.Println("提交任务前就超时了。")
-				continue
-			}
-			// 提交任务失败,表示master可能宕机了
-			if (!call("Master.SubmitTask", &submitMessage, &taskMessage, taskMessage.TimeStamp)){
-				fmt.Println("call Master.SubmitTask failed")
-				return ;
-			}
 			break
 		default :// wait
 			// 睡眠然后继续
 			time.Sleep(time.Second)
 			continue
 		}
+		// 提交任务失败,表示master可能宕机了,但这个时候不退出。而是等再次申请任务时退出。
+		if (!call("Master.SubmitTask", &submitMessage, &taskMessage, true, taskMessage.TimeStamp - 10000000)){ // 提前十毫秒。
+			fmt.Printf("call Master.SubmitTask failed, taskMessage : %v, taskType : %x, taskId ： %x\n",taskMessage ,taskType, taskId)
+			continue
+		}
 	}
 }
 
-func call(rpcname string, args interface{}, reply interface{}, timeout int64) bool {
+func call(rpcname string, args interface{}, reply interface{}, startTimeout bool, timeout int64) bool {
 	limit := time.Duration(timeout - time.Now().UnixNano()) * time.Nanosecond
-	if timeout == 0{
+	if startTimeout{
 		limit = 0
 	}
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:1245", limit)
+	time.Sleep(time.Second)
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:1235", limit)
 	if err != nil {
 		fmt.Println("TCP连接超时")
 		return false // 任务超时
 	}
 	defer conn.Close()
 
-	if timeout != 0{
+	if startTimeout{
     	conn.SetReadDeadline(time.Unix(timeout, 0))
 	}
-
+	/*
+	调用超时的原理超时之后就不重发了？但是之前发的可能已到达。
+	*/
     client := rpc.NewClient(conn)
 	defer client.Close()
 	

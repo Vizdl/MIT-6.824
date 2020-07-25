@@ -89,15 +89,9 @@ type Master struct {
 
 
 	/* 以下都是服务器的状态 */
-	states MasterStatus /* 几乎所有线程都有读写 */
-	unsent int /* 当前阶段未派出的任务数量 */
-	uncompleted int /* 未完成的任务数量 */
-	/*
-	对任务进行管理的一个结构 : 
-	要求 : 
-	1) 找出一个状态为未分配的任务。
-	2) 找出一个状态为已分配的任务。
-	*/
+	states MasterStatus 
+	unsent int 
+	uncompleted int
 	mapTask[]*TaskMessage
 	runMapTask[]*TaskMessage /* 已分配出去的mapTask */
 	reduceTask[]*TaskMessage
@@ -118,13 +112,11 @@ func Max(x, y int) int {
 */
 func (m *Master) getCurrTaskSArrPairPtr()(*[]*TaskMessage, *[]*TaskMessage){
 	if m.states == MasterMap {
-		fmt.Printf("任务类型为 Map\n")
 		return &m.mapTask, &m.runMapTask
 	}else if m.states == MasterReduce{
-		fmt.Printf("任务类型为 Reduce\n")
 		return &m.reduceTask, &m.runReduceTask
 	}else {
-		fmt.Printf("错误的任务类型,当前master处于完成或者失败状态。\n")
+		fmt.Printf("错误的任务类型,当前master处于编号为 %d 的状态下\n",m.states)
 		return nil, nil
 	}
 } 
@@ -134,17 +126,17 @@ func (m *Master) getCurrTaskSArrPairPtr()(*[]*TaskMessage, *[]*TaskMessage){
 */
 func (m *Master) cancelIssuedTask (taskId uint32){
 	m.unsent++
-	// 将任务回归到未派发队列中。
 	firstTask, firstRunTask := m.getCurrTaskSArrPairPtr()
 	(*firstTask)[taskId] = (*firstRunTask)[taskId] 
 	(*firstRunTask)[taskId] = nil
-	// 增加超时时长
-	m.timeoutLimits[taskId] <<= 1
+	if m.timeoutLimits[taskId] & (1 << 61) == 0{ // 防止溢出
+		m.timeoutLimits[taskId] <<= 1	// 增加超时时长
+	}
 	return 
 }
 
 func (m *Master) finishIssuedTask (taskId uint32){
-	m.uncompleted--// 状态变化
+	m.uncompleted--
 	if m.uncompleted == 0 { // 当前阶段任务全部完成了。
 		if m.states == MasterMap {
 			m.states = MasterReduce
@@ -152,9 +144,11 @@ func (m *Master) finishIssuedTask (taskId uint32){
 			m.uncompleted = m.nReduce
 		}else if m.states == MasterReduce {
 			m.states = MasterComplete;
+			m.unsent = 0
+			m.uncompleted = 0
 			fmt.Printf("==================== 所有任务完成 ====================\n")
 		}else {
-
+			fmt.Printf("==================== finishIssuedTask发生错误 ====================\n")
 		}
 	}
 }
@@ -165,22 +159,23 @@ func (m *Master) finishIssuedTask (taskId uint32){
 */
 func (m *Master) taskMonitor (taskId uint32, timeout int64){
 	// 设置定时器,经过实验,如果limit是负数就直接事件发生。
-	limit:= time.Duration(timeout - time.Now().UnixNano()) * time.Nanosecond
+	limit:= time.Duration(timeout - time.Now().UnixNano()) * time.Nanosecond // 会有微量不可避免的偏差
 	timeoutEvent := time.NewTimer(limit)
 	select {
 	case <-timeoutEvent.C: // 如若任务taskId超时事件先发生。
-		fmt.Printf("EVENT =========== 任务 %d 超时, limit : %d.\n",taskId,limit)
+		fmt.Printf("EVENT 任务 %d 超时, limit : %d.BEGIN\n",taskId,limit)
 		m.mu.Lock()
 		m.cancelIssuedTask(taskId)
 		m.mu.Unlock()
+		fmt.Printf("EVENT 任务 %d 超时, limit : %d.END\n",taskId,limit)
 	case <-m.completedEvents[taskId]: // 如若任务taskId完成事件先发生。
-		fmt.Printf("EVENT =========== 任务 %d 完成.\n",taskId)
+		fmt.Printf("EVENT 任务 %d 完成BEGIN.\n",taskId)
 		m.mu.Lock()
 		m.finishIssuedTask(taskId)
 		m.mu.Unlock()
+		fmt.Printf("EVENT 任务 %d 完成END.\n",taskId)
 		timeoutEvent.Stop()
 	}
-	fmt.Printf("EVENT =========== 任务 %d 监听结束\n",taskId)
 	return 
 }
 
@@ -230,10 +225,16 @@ SubmitTask : 提交任务,告知master当前自己的任务状态(可能成功�
 func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessage)error{
 	// taskType := submitMessage.TaskCode >> 30;
 	taskId := (submitMessage.TaskCode << 2) >> 2
-	fmt.Printf("submitMessage value :  %v\n", submitMessage)
 	switch submitMessage.SubmitType{
 	case 1 :
-		m.completedEvents[taskId] <- struct{}{} // 通知事件完成。向一个未监听的
+		fmt.Printf("submitMessage value :  %v\tBEGIN\n", submitMessage)
+		fmt.Println("m.completedEvents[",taskId,"]:", len(m.completedEvents[taskId]))
+		m.completedEvents[taskId] <- struct{}{} // 通知事件完成。向一个未监听的管道写东西也是会堵塞的,如下:
+		// EVENT 任务 1 超时, limit : 799860200.BEGIN
+		// EVENT 任务 1 超时, limit : 799860200.END
+		// submitMessage value :  &{1073741825 1}  BEGIN
+		// m.completedEvents[ 1 ]: 0
+		fmt.Printf("submitMessage value :  %v\tEND\n", submitMessage)
 		break
 	default :
 		fmt.Printf("SubmitTask : submitMessage.SubmitType error")
@@ -248,7 +249,7 @@ func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessa
 func (m *Master) server() {
 	newServer := rpc.NewServer()
     newServer.Register(m)
-    l, e := net.Listen("tcp", "127.0.0.1:1245") 
+    l, e := net.Listen("tcp", "127.0.0.1:1235") 
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}

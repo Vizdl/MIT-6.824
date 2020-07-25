@@ -16,17 +16,20 @@ import "os"
 import "sort"
 import "strconv"
 import "time"
+import "fmt"
 
 func maybeCrash() {
 	max := big.NewInt(1000)
 	rr, _ := crand.Int(crand.Reader, max)
 	if rr.Int64() < 330 {
 		// crash!
+		fmt.Printf("crash : =========================================\n")
 		os.Exit(1)
 	} else if rr.Int64() < 660 {
 		// delay for a while.
 		maxms := big.NewInt(10 * 1000)
 		ms, _ := crand.Int(crand.Reader, maxms)
+		fmt.Printf("睡眠 : %d=========================================\n",int64(time.Duration(ms.Int64()) * time.Millisecond))
 		time.Sleep(time.Duration(ms.Int64()) * time.Millisecond)
 	}
 }
