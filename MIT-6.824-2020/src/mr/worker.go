@@ -163,11 +163,11 @@ func Worker(mapf func(string, string) []KeyValue,
 
 func call(rpcname string, args interface{}, reply interface{}, startTimeout bool, timeout int64) bool {
 	limit := time.Duration(timeout - time.Now().UnixNano()) * time.Nanosecond
-	if startTimeout{
+	if !startTimeout{
 		limit = 0
 	}
-	time.Sleep(time.Second)
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:1235", limit)
+	// time.Sleep(time.Second)
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:4444", limit)
 	if err != nil {
 		fmt.Println("TCP连接超时")
 		return false // 任务超时
@@ -175,7 +175,7 @@ func call(rpcname string, args interface{}, reply interface{}, startTimeout bool
 	defer conn.Close()
 
 	if startTimeout{
-    	conn.SetReadDeadline(time.Unix(timeout, 0))
+    	conn.SetReadDeadline(time.Unix(0, timeout)) // 第一个参数为秒,第二个为纳秒
 	}
 	/*
 	调用超时的原理超时之后就不重发了？但是之前发的可能已到达。

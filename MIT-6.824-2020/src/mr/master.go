@@ -181,6 +181,11 @@ func (m *Master) taskMonitor (taskId uint32, timeout int64){
 
 
 /////////////////////////////////////////////////////////////////////////////////////// PUBLIC ///////////////////////////////////////////////////////////////////////////////////////
+func (m *Master) RegisterWorker () error {
+	
+}
+
+
 /*
 GetTask : 提交申请书(Application),获取申请结果。
 返回值 :
@@ -249,7 +254,7 @@ func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessa
 func (m *Master) server() {
 	newServer := rpc.NewServer()
     newServer.Register(m)
-    l, e := net.Listen("tcp", "127.0.0.1:1235") 
+    l, e := net.Listen("tcp", "127.0.0.1:4444") 
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}

@@ -6,6 +6,12 @@ package mr
 
 // Add your RPC definitions here.
 
+/*
+注册表 : 如若注册失败,换一个ID继续注册。
+*/
+type RegisterTable struct{
+	UID uint32 // Worker唯一ID
+}
 type Application struct{
 	
 }
