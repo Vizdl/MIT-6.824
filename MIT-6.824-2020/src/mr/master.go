@@ -1,15 +1,12 @@
 package mr
 
-// import "fmt"
 import "log"
 import "net"
 import "os"
 import "net/rpc"
-// import "net/http"
 import "sync"
 import "fmt"
 import "time"
-
 
 /*
 容错 : 
@@ -67,6 +64,8 @@ MasterFailed : 异常初始化后
 		3) rpc申请任务协程
 */
 
+const NOTASK = -1
+const MAXWUID = 0x7fffffff // 最大为 2^31 - 1
 /*
 这些阶段要按照完成顺序来。
 */
@@ -89,6 +88,7 @@ type Master struct {
 
 
 	/* 以下都是服务器的状态 */
+	wuid uint32	/* worker 唯一id,每次都递增 */
 	states MasterStatus 
 	unsent int 
 	uncompleted int
@@ -96,7 +96,9 @@ type Master struct {
 	runMapTask[]*TaskMessage /* 已分配出去的mapTask */
 	reduceTask[]*TaskMessage
 	runReduceTask[]*TaskMessage /* 已分配出去的reduceTask */
+	workerMap map[uint32]int /* key : wuid, value : taskid, 如若当前worker无有效任务,则value=NOTASK*/
 	timeoutLimits []int64		/* 单位:纳秒,每次未完成,都将超时时间提升2数倍 */
+	eventsChan chan uint32		/* 事件管道 */
 }
 /////////////////////////////////////////////=///////////////////////////////////// 静态lib函数 ////////////////////////////////////////////////////////////////////////////////////////
 func Max(x, y int) int {
@@ -121,6 +123,16 @@ func (m *Master) getCurrTaskSArrPairPtr()(*[]*TaskMessage, *[]*TaskMessage){
 	}
 } 
 
+
+func (m *Master) procEvents(){
+	while true{
+		event := <- m.eventsChan // 从管道接收端取出事件
+		eventExecuter(event) // 执行事件
+	}
+}
+
+
+
 /*
 私有函数 : 取消已经派送的任务。内部不加锁。但是函数外部要加锁。
 */
@@ -143,7 +155,7 @@ func (m *Master) finishIssuedTask (taskId uint32){
 			m.unsent = m.nReduce
 			m.uncompleted = m.nReduce
 		}else if m.states == MasterReduce {
-			m.states = MasterComplete;
+			m.states = MasterComplete
 			m.unsent = 0
 			m.uncompleted = 0
 			fmt.Printf("==================== 所有任务完成 ====================\n")
@@ -166,12 +178,14 @@ func (m *Master) taskMonitor (taskId uint32, timeout int64){
 		fmt.Printf("EVENT 任务 %d 超时, limit : %d.BEGIN\n",taskId,limit)
 		m.mu.Lock()
 		m.cancelIssuedTask(taskId)
+		m.workerMap[submitMessage.WUID] = NOTASK
 		m.mu.Unlock()
 		fmt.Printf("EVENT 任务 %d 超时, limit : %d.END\n",taskId,limit)
 	case <-m.completedEvents[taskId]: // 如若任务taskId完成事件先发生。
 		fmt.Printf("EVENT 任务 %d 完成BEGIN.\n",taskId)
 		m.mu.Lock()
 		m.finishIssuedTask(taskId)
+		m.workerMap[submitMessage.WUID] = NOTASK
 		m.mu.Unlock()
 		fmt.Printf("EVENT 任务 %d 完成END.\n",taskId)
 		timeoutEvent.Stop()
@@ -179,10 +193,48 @@ func (m *Master) taskMonitor (taskId uint32, timeout int64){
 	return 
 }
 
+/*
+事件结构 : 
+	前四个字节 : 任务号
+	后四个字节 : 
+		最高位 : 任务是否成功
+		低31位 : 事件发送者
+*/
+func (m *Master) eventExecuter(event uint64){
+	taskId := event >> 32
+	eventCode := (event << 32) >> 63// 最高位
+	wuid := (event << 33) >> 33
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	switch eventCode{
+	case 0: // 失败,超时
+		
+	case 1: // 成功
+		tid,exist := m.workerMap[wuid] 
+		if !exist {
+			submitResult.IsSucceed = false
+			return nil
+		}
+		if tid != taskId {
+			submitResult.IsSucceed = false
+			return nil
+		}
+	}
+}
 
 /////////////////////////////////////////////////////////////////////////////////////// PUBLIC ///////////////////////////////////////////////////////////////////////////////////////
-func (m *Master) RegisterWorker () error {
-	
+func (m *Master) RegisterWorker (registerTable *RegisterTable, registerResult *RegisterResult) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	registerResult.WUID = m.wuid
+	m.workerMap[m.wuid] = NOTASK
+	if m.wuid < MAXWUID{ // 
+		m.wuid++
+	}else {
+		fmt.Printf("wuid 已达到最大,无法再分配!")
+		return nil
+	}
+	return nil
 }
 
 
@@ -194,6 +246,13 @@ taskMessage : 如若申请失败为nil,申请者应该退出。否则应该是�
 func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	taskId,exist := m.workerMap[application.WUID]
+	if !exist {
+		return nil
+	}
+	if taskId != NOTASK{ // 手上还有任务没交完。
+		return nil
+	}
 	if m.unsent <= 0 {
 		temp := TaskMessage{
 			TaskCode : uint32(0),
@@ -207,17 +266,18 @@ func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) er
 		for i, task := range (*firstTask) {
 			if task != nil {
 				(*task).TimeStamp = time.Now().UnixNano() + m.timeoutLimits[i]
+				m.workerMap[application.WUID] = i
 				*taskMessage = *task
 				(*firstRunTask)[i] = task
 				(*firstTask)[i] = nil
 				// 大概估计 : 一次取余运算需要五个时钟周期(50ns)。
 				go m.taskMonitor(uint32(i), (*task).TimeStamp)
-				break;
+				break
 			}
 		}
 		m.unsent--
 	}
-	return nil;
+	return nil
 }
 
 
@@ -227,14 +287,15 @@ SubmitTask : 提交任务,告知master当前自己的任务状态(可能成功�
 已派发 -> 已完成
 已派发 -> 未派发
 */
-func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessage)error{
-	// taskType := submitMessage.TaskCode >> 30;
+func (m *Master) SubmitTask(submitMessage *SubmitMessage, submitResult *SubmitResult)error{
+	// taskType := submitMessage.TaskCode >> 30
 	taskId := (submitMessage.TaskCode << 2) >> 2
-	switch submitMessage.SubmitType{
+	switch submitMessage.SubmitType{	// 如若执行到这时超时了?
 	case 1 :
 		fmt.Printf("submitMessage value :  %v\tBEGIN\n", submitMessage)
 		fmt.Println("m.completedEvents[",taskId,"]:", len(m.completedEvents[taskId]))
 		m.completedEvents[taskId] <- struct{}{} // 通知事件完成。向一个未监听的管道写东西也是会堵塞的,如下:
+		submitResult.IsSucceed = true
 		// EVENT 任务 1 超时, limit : 799860200.BEGIN
 		// EVENT 任务 1 超时, limit : 799860200.END
 		// submitMessage value :  &{1073741825 1}  BEGIN
@@ -244,7 +305,7 @@ func (m *Master) SubmitTask(submitMessage *SubmitMessage, taskMessage *TaskMessa
 	default :
 		fmt.Printf("SubmitTask : submitMessage.SubmitType error")
 	}
-	return nil;
+	return nil
 }
 
 
@@ -278,6 +339,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 	}
 	nMap := len(files)
 	m := Master{
+		wuid : 1,
 		nReduce : nReduce,
 		states : MasterMap,
 		unsent : nMap,
@@ -288,6 +350,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 		runReduceTask : make([]*TaskMessage, nReduce),
 		completedEvents : make([]chan struct{}, Max(nMap, nReduce)),
 		timeoutLimits : make([]int64, Max(nMap, nReduce)),
+		// runTaskMap : make(map[uint32]uint32),
 	}
 	for i := 0; i < len(m.completedEvents); i++{
 		m.completedEvents[i] = make(chan struct{})
@@ -317,7 +380,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 			NReduce : nReduce,
 		}
 		m.mapTask[taskId] = &taskMessage
-		m.runMapTask[taskId] = nil;
+		m.runMapTask[taskId] = nil
 		taskId++
 	}
 	taskId = uint32(0)
@@ -329,7 +392,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 			NReduce : nReduce,
 		}
 		m.reduceTask[i] = &taskMessage
-		m.runReduceTask[i] = nil;
+		m.runReduceTask[i] = nil
 		taskId++
 	}
 	// 开启服务,等待连接。

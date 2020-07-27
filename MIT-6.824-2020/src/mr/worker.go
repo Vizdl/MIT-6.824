@@ -39,20 +39,32 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	// Your worker implementation here.
-
-	// uncomment to send the Example RPC to the master.
-	// CallExample()
+	// 注册成为对应master的worker
+	registerTable := RegisterTable{}
+	registerResult := RegisterResult{}
+	// 请求任务
+	if (!call("Master.RegisterWorker", &registerTable, &registerResult, false, 0)){
+		fmt.Println("call Master.RegisterWorker failed.程序退出。")
+		return 
+	} 
+	wuid := registerResult.WUID;
 	// 循环请求任务
 	for true {
-		application := Application{}
+		application := Application{
+			WUID : wuid,
+		}
 		taskMessage := TaskMessage{}
 		// 请求任务
 		if (!call("Master.GetTask", &application, &taskMessage, false, 0)){
 			fmt.Println("call Master.GetTask failed.程序退出。")
 			return 
 		} 
-		submitMessage := SubmitMessage{taskMessage.TaskCode,uint32(1)}
+		submitMessage := SubmitMessage{
+			WUID : wuid,
+			TaskCode : taskMessage.TaskCode,
+			SubmitType : uint32(1),
+		}
+		submitResult := SubmitResult{}
 		taskType := taskMessage.TaskCode >> 30;
 		taskId := (taskMessage.TaskCode << 2) >> 2
 		fmt.Printf("taskMessage : %v, taskType : %x, taskId ： %x\n",taskMessage ,taskType, taskId)
@@ -154,7 +166,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			continue
 		}
 		// 提交任务失败,表示master可能宕机了,但这个时候不退出。而是等再次申请任务时退出。
-		if (!call("Master.SubmitTask", &submitMessage, &taskMessage, true, taskMessage.TimeStamp - 10000000)){ // 提前十毫秒。
+		if (!call("Master.SubmitTask", &submitMessage, &submitResult, true, taskMessage.TimeStamp - 10000000)){ // 提前十毫秒。
 			fmt.Printf("call Master.SubmitTask failed, taskMessage : %v, taskType : %x, taskId ： %x\n",taskMessage ,taskType, taskId)
 			continue
 		}

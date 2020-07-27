@@ -10,12 +10,19 @@ package mr
 注册表 : 如若注册失败,换一个ID继续注册。
 */
 type RegisterTable struct{
-	UID uint32 // Worker唯一ID
+	WUID uint32 // Worker唯一ID
 }
+
+type RegisterResult struct{
+	WUID uint32 // Worker唯一ID
+}
+
+
 type Application struct{
-	
+	WUID uint32 // Worker唯一ID
 }
 type SubmitMessage struct{
+	WUID uint32 // Worker唯一ID
 	/* 
 	最高两个bit表示类型 : 
 		0 : wait
@@ -49,5 +56,10 @@ type TaskMessage struct{
 	任务被分配出去的时间戳,只有被分配时出去才有意义。
 	*/
 	TimeStamp int64
+}
+
+
+type SubmitResult struct{
+	IsSucceed bool // 是否成功提交
 }
 
