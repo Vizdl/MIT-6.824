@@ -61,12 +61,13 @@ func Worker(mapf func(string, string) []KeyValue,
 		} 
 		submitMessage := SubmitMessage{
 			WUID : wuid,
-			TaskCode : taskMessage.TaskCode,
+			TaskType : taskMessage.TaskType,
+			TaskId : taskMessage.TaskId,
 			SubmitType : uint32(1),
 		}
 		submitResult := SubmitResult{}
-		taskType := taskMessage.TaskCode >> 30;
-		taskId := (taskMessage.TaskCode << 2) >> 2
+		taskType := taskMessage.TaskType;
+		taskId := taskMessage.TaskId
 		fmt.Printf("taskMessage : %v, taskType : %x, taskId ： %x\n",taskMessage ,taskType, taskId)
 		switch taskType {
 		case 1:

@@ -6,11 +6,16 @@ package mr
 
 // Add your RPC definitions here.
 
+type ETaskType int32
+const (
+	WaitTask ETaskType = iota
+    MapTask 
+    ReduceTask       
+)
 /*
 注册表 : 如若注册失败,换一个ID继续注册。
 */
 type RegisterTable struct{
-	WUID uint32 // Worker唯一ID
 }
 
 type RegisterResult struct{
@@ -23,28 +28,14 @@ type Application struct{
 }
 type SubmitMessage struct{
 	WUID uint32 // Worker唯一ID
-	/* 
-	最高两个bit表示类型 : 
-		0 : wait
-		1 : map
-		2 : reduce
-		3 : 未分配的任务号
-	低30bit表示任务id
-	*/
-	TaskCode uint32 
+	TaskType ETaskType
+	TaskId uint32 
 	SubmitType uint32
 }
 
 type TaskMessage struct{
-	/* 
-	最高两个bit表示类型 : 
-		0 : wait
-		1 : map
-		2 : reduce
-		3 : 未分配的任务号
-	低30bit表示任务id
-	*/
-	TaskCode uint32 
+	TaskType ETaskType
+	TaskId uint32 
 	/*
 	对于 map 来说 : file 是输入,dir是输出。
 	对于 reduce 来说 : dir 是输入, file 是输出。
