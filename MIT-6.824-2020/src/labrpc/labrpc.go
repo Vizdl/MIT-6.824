@@ -49,6 +49,49 @@ package labrpc
 //   pass svc to srv.AddService()
 //
 
+// 基于通道的RPC，用于824个实验室。
+// 模拟一个网络，它可能会丢失请求，丢失响应，
+// 延迟消息，并完全断开特定主机的连接。
+// 我们将使用原始的labrpc。
+// 去测试你的评分代码。
+// 所以，当你可以修改这段代码来帮助你调试，请
+// 在提交之前对原始文件进行测试。
+// 改编自Go net/rpc/server.go。
+// 发送labgob编码的值，以确保rpc
+// 不要包含对程序对象的引用。
+// net:= MakeNetwork()——保存网络、客户端和服务器。
+// makeend (endname)——创建一个客户端端点，与一个服务器进行通信。
+// 网。
+// AddServer(servername, server)——向网络添加一个已命名的服务器。
+// deleteserver (servername)——删除已命名服务器。
+// 网。
+// Connect(endname, servername)——将客户端连接到服务器。
+// 网。
+// 启用(endname, enabled)——启用/禁用客户端。
+// net.Reliable(bool)——false表示丢弃/延迟消息
+// end.Call(“筏。
+// 发送一个RPC，等待回复。
+// “Raft”是要调用的服务器结构体的名称。
+// “AppendEntries”是要调用的方法的名称。
+// Call()返回true表示服务器执行了请求
+// 回复是有效的。
+// 如果网络丢失了请求或应答，Call()返回false
+// 或者服务器宕机了。
+// 对象上同时进行多个调用是可以的
+// ClientEnd相同。
+// 对Call()的并发调用可能会被无序地传递到服务器，
+// 因为网络可以对消息重新排序。
+// Call()保证返回(可能在延迟之后)*除非*如果
+// 服务器端的处理程序函数不返回。
+// 服务器RPC处理程序函数必须声明它的args和应答参数
+// 作为指针，以便它们的类型与参数的类型完全匹配
+// 叫()。
+// srv: = MakeServer ()
+// 一个服务器可以有多个服务，例如Raft和k/v
+// 将srv传递给net.AddServer()
+// = MakeService(receiverObject)——obj的方法将处理rpc
+// 非常像Go的rpc . register ()
+// 将svc传递给srv.AddService()
 import "labgob"
 import "bytes"
 import "reflect"
@@ -81,6 +124,7 @@ type ClientEnd struct {
 // send an RPC, wait for the reply.
 // the return value indicates success; false means that
 // no reply was received from the server.
+// 发送一个RPC，等待回复。返回值表示成功; false表示没有收到来自服务器的应答。
 func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bool {
 	req := reqMsg{}
 	req.endname = e.endname

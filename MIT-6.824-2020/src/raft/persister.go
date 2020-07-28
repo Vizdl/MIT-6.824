@@ -50,6 +50,7 @@ func (ps *Persister) RaftStateSize() int {
 
 // Save both Raft state and K/V snapshot as a single atomic action,
 // to help avoid them getting out of sync.
+//将筏状态和K/V快照都保存为单个原子动作，以帮助避免它们不同步。
 func (ps *Persister) SaveStateAndSnapshot(state []byte, snapshot []byte) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
