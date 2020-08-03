@@ -13,14 +13,14 @@ import "sync"
 
 type Persister struct {
 	mu        sync.Mutex
-	raftstate []byte
-	snapshot  []byte
+	raftstate []byte // 服务器状态
+	snapshot  []byte // 快照
 }
 
 func MakePersister() *Persister {
 	return &Persister{}
 }
-
+// 复制
 func (ps *Persister) Copy() *Persister {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -29,13 +29,13 @@ func (ps *Persister) Copy() *Persister {
 	np.snapshot = ps.snapshot
 	return np
 }
-
+// 保存快照
 func (ps *Persister) SaveRaftState(state []byte) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	ps.raftstate = state
 }
-
+// 读取快照
 func (ps *Persister) ReadRaftState() []byte {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -63,7 +63,7 @@ func (ps *Persister) ReadSnapshot() []byte {
 	defer ps.mu.Unlock()
 	return ps.snapshot
 }
-
+// 快照长度
 func (ps *Persister) SnapshotSize() int {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()

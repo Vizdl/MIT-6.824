@@ -116,8 +116,8 @@ type replyMsg struct {
 }
 
 type ClientEnd struct {
-	endname interface{}   // this end-point's name
-	ch      chan reqMsg   // copy of Network.endCh
+	endname interface{}   // this end-point's name 这个端点的名称
+	ch      chan reqMsg   // copy of Network.endCh Network.endCh副本
 	done    chan struct{} // closed when Network is cleaned up
 }
 
@@ -168,7 +168,7 @@ type Network struct {
 	connections    map[interface{}]interface{} // endname -> servername
 	endCh          chan reqMsg
 	done           chan struct{} // closed when Network is cleaned up
-	count          int32         // total RPC count, for statistics
+	count          int32         // total RPC count, for statistics 用于统计的RPC总数
 }
 
 func MakeNetwork() *Network {
@@ -182,7 +182,7 @@ func MakeNetwork() *Network {
 	rn.done = make(chan struct{})
 
 	// single goroutine to handle all ClientEnd.Call()s
-	go func() {
+	go func() {	// 开启管道监听
 		for {
 			select {
 			case xreq := <-rn.endCh:
@@ -207,7 +207,7 @@ func (rn *Network) Reliable(yes bool) {
 
 	rn.reliable = yes
 }
-
+// 长时间重新排序
 func (rn *Network) LongReordering(yes bool) {
 	rn.mu.Lock()
 	defer rn.mu.Unlock()

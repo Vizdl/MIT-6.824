@@ -52,7 +52,7 @@ func (js *JunkServer) Handler5(args JunkArgs, reply *JunkReply) {
 }
 
 func TestBasic(t *testing.T) {
-	runtime.GOMAXPROCS(4)
+	runtime.GOMAXPROCS(4) // 使用四个线程运行协程
 
 	rn := MakeNetwork()
 	defer rn.Cleanup()

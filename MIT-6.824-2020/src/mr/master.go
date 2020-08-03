@@ -8,49 +8,26 @@ import "sync"
 import "fmt"
 import "time"
 
-/*
-容错 : 
-如何判断 worker 是否掉线？
-	从给定任务开始计时,如若在特定时间内未完成任务,则认为超时。
-如若任务需要执行的时间确实超过这个固定的限定?
-	第一次限时为 x 秒,派发出去两次如若都未完成,则限定改为 x*2秒。以此类推。
-如若已派发的任务其实还在进行,但是还需要一点时间,而这个时候按照判定将其视为失败。但之后该worker完成了,来提交任务怎么办?
-	1) 避免时间差,假设 master 任务 100ms 超时, 而 worker 则认为 95ms 内没完成就是超时。 这样因时间上的精度问题而导致双方认知不一致的问题。
-	然后设置发送超时时间,达成 处理时间 + 超时时间 + 定时器的最大误差 * 2 < 限定超时时间, 就可以确保 master worker双方达成一致。
-*/
 
+
+const NOTASK = 0xffffffff  		/* 2^32-1为没有任务,任务号不允许等于它 */
+const MAXWUID = 0xffffffff 		/* 最大为 2^32 - 1 */
 
 /*
-定时任务go语言具体实现方案
-	master : 
-		每次派发出去任务,都做一个定时任务,且这个定时任务有两个管道,分别代表两种事件发生 : 任务成功与任务超时。
-	worker : 
-
+	对于整体任务有四种状态 : 
+	MASTERMAP : 正常初始化后就是 MAP
+	MASTERREDUCE : 所有 MAP 成功完成后
+	MASTERCOMPLETE : 所有 REDUCE 成功完成后
+	MASTERFAILED : 异常初始化后 
 */
+type EMasterStatus int32
+const (
+    MasterMap EMasterStatus = iota       
+    MasterReduce            
+	MasterComplete
+	MasterFailed
+)
 
-/*
-对于一个任务有三种状态 : 
-1) 未派发
-2) 已派发
-3）已完成
-
-对于整体任务有四种状态 : 
-MasterMap : 正常初始化后就是 Map
-MasterReduce : 所有 Map 成功完成后
-MasterComplete : 所有 Reduce 成功完成后
-MasterFailed : 异常初始化后 
-*/
-
-
-/*
-什么时候 master 死亡? 
-	当所有任务都结束的时候
-什么时候 worker 死亡?
-	获取任务很久但是超时的时候
-什么时候 master 认定 任务失败?
-	1) 任务长时间未完成
-	2) 任务被提交的时候返回为失败。
-*/
 
 /*
 事件接口设计 ：
@@ -63,54 +40,48 @@ MasterFailed : 异常初始化后
 		2) rpc提交任务协程
 		3) rpc申请任务协程
 */
-const NOTASK = 0xffffffff // 2^32-1为没有任务,任务号不允许等于它
-const MAXWUID = 0xffffffff // 最大为 2^32 - 1
-/*
-这些阶段要按照完成顺序来。
-*/
-type EMasterStatus int32
-const (
-    MasterMap EMasterStatus = iota       
-    MasterReduce            
-	MasterComplete
-	MasterFailed
-)
 type EEventCode uint32
 const (
     CompletedEvent = iota       
     TimeoutEvent    
 )
-/*
-事件 : 
-*/
+
 type Event struct{
 	WUID uint32
 	Code EEventCode
 	TaskId uint32
 }
+
 /*
 服务器的状态随着 rpc调用 不断发生变更。
+
+	对于一个任务有三种状态 : 
+	1) 未派发
+	2) 已派发
+	3）已完成
+	
 */
 type Master struct {
 	// Your definitions here.
-	nReduce int // 多线程读,初始化时才有写。 不需要锁保护。
-	completedEvents[]chan struct{} /* 任务完成事件组,管道不需要锁保护,因为两个线程调用的是两段,并且是线程安全的。*/
-	mu sync.Mutex				// 用来保存服务器状态的。
+	nReduce int						/* reduce任务数 */
+	completedEvents[]chan struct{} 	/* 任务完成事件组,管道不需要锁保护,因为两个线程调用的是两段,并且是线程安全的。*/
+	mu sync.Mutex					/* 用来保护服务器状态 */
 
 
 	/* 以下都是服务器的状态 */
-	wuid uint32	/* worker 唯一id,每次都递增 */
-	states EMasterStatus 
-	unsent int 
-	uncompleted int
-	mapTask[]*TaskMessage
-	runMapTask[]*TaskMessage /* 已分配出去的mapTask */
-	reduceTask[]*TaskMessage
-	runReduceTask[]*TaskMessage /* 已分配出去的reduceTask */
-	workerMap map[uint32]uint32 /* key : wuid, value : taskid, 如若当前worker无有效任务,则value=NOTASK*/
-	timeoutLimits []int64		/* 单位:纳秒,每次未完成,都将超时时间提升2数倍 */
-	eventChan chan Event		/* 事件管道 */
+	wuid uint32						/* worker 唯一id,每次都递增 */
+	states EMasterStatus 			/* 当前master阶段 */
+	unsent int 						/* 当前阶段未分配出去的任务数量 */
+	uncompleted int					/* 当前阶段未完成的任务数量 */
+	mapTask[]*TaskMessage 			/* 未分配出去的mapTask */
+	runMapTask[]*TaskMessage 		/* 已分配出去的mapTask */
+	reduceTask[]*TaskMessage		/* 未分配出去的reduceTask */
+	runReduceTask[]*TaskMessage 	/* 已分配出去的reduceTask */
+	workerMap map[uint32]uint32 	/* key : wuid, value : taskid, 如若当前worker无有效任务,则value=NOTASK*/
+	timeoutLimits []int64			/* 单位:纳秒,每次未完成,都将超时时间提升2数倍 */
+	eventChan chan Event			/* 事件管道 */
 }
+
 /////////////////////////////////////////////=///////////////////////////////////// 静态lib函数 ////////////////////////////////////////////////////////////////////////////////////////
 func Max(x, y int) int {
     if x < y {
@@ -177,8 +148,11 @@ func (m *Master) finishIssuedTask (taskId uint32){
 }
 
 /*
-任务定时器 : 通过开启一个 goroutine 利用 select 来进行监听 '事件(管道)'来达成对事件的响应。
-输入 : 任务号与任务超时时刻的时间戳。
+函数功能 : 给当前服务器阶段的具体任务定时。当超出时间戳后,将自动启动超时任务。
+输入 :
+timeout : 超时时间戳。
+taskId : 需定时的任务ID
+wuid : 获取到任务号为taskId的worker的唯一ID。
 */
 func (m *Master) taskTimer(wuid uint32, taskId uint32, timeout int64){
 	// 设置定时器,经过实验,如果limit是负数就直接事件发生。
@@ -194,6 +168,10 @@ func (m *Master) taskTimer(wuid uint32, taskId uint32, timeout int64){
 	return 
 }
 
+
+/*
+函数功能 : 单次事件处理。
+*/
 func (m *Master) eventExecuter(event Event){
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -215,6 +193,9 @@ func (m *Master) eventExecuter(event Event){
 }
 
 /////////////////////////////////////////////////////////////////////////////////////// PUBLIC ///////////////////////////////////////////////////////////////////////////////////////
+/*
+函数功能 : 注册worker服务器。
+*/
 func (m *Master) RegisterWorker (registerTable *RegisterTable, registerResult *RegisterResult) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -231,6 +212,7 @@ func (m *Master) RegisterWorker (registerTable *RegisterTable, registerResult *R
 
 
 /*
+函数功能 : 获取任务。
 GetTask : 提交申请书(Application),获取申请结果。
 返回值 :
 taskMessage : 如若申请失败为nil,申请者应该退出。否则应该是有效指针。
@@ -297,9 +279,9 @@ func (m *Master) SubmitTask(submitMessage *SubmitMessage, submitResult *SubmitRe
 }
 
 
-//
-// start a thread that listens for RPCs from worker.go
-//
+/*
+rpc服务
+*/
 func (m *Master) server() {
 	newServer := rpc.NewServer()
     newServer.Register(m)
@@ -310,10 +292,10 @@ func (m *Master) server() {
     go newServer.Accept(l)
 }
 
-//
-// main/mrmaster.go calls Done() periodically to find out
-// if the entire job has finished.
-//
+
+/*
+函数功能 : 判断所有任务是否完成。
+*/
 func (m *Master) Done() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -321,6 +303,9 @@ func (m *Master) Done() bool {
 	return ret
 }
 
+/*
+函数功能 : 创建master服务器,并初始化服务器状态。
+*/
 func MakeMaster(files []string, nReduce int) *Master {
 	if nReduce <= 0 {
 		nReduce = 1
@@ -346,7 +331,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 	}
 	// 设置初始timeout
 	for i := 0; i < len(m.timeoutLimits); i++ {
-		m.timeoutLimits[i] = 100000000 // 100 000 000会有几个任务完不成。
+		m.timeoutLimits[i] = 100000000 
 	}
 	
 	// 核查文件系统是否存在files内文件

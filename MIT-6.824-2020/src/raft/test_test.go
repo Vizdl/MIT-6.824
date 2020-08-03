@@ -26,7 +26,7 @@ testing.T : testing 里面的。
 */
 func TestInitialElection2A(t *testing.T) {
 	servers := 3
-	cfg := make_config(t, servers, false)
+	cfg := make_config(t, servers, false) // 1 : ? , 2 : raft服务器数量, 3 : 设置是否可靠
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2A): initial election")

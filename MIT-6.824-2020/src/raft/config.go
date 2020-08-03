@@ -36,16 +36,16 @@ func makeSeed() int64 {
 
 type config struct {
 	mu        sync.Mutex
-	t         *testing.T
-	net       *labrpc.Network
-	n         int
-	rafts     []*Raft
+	t         *testing.T 
+	net       *labrpc.Network // 模拟的网络
+	n         int     // raft服务器数量
+	rafts     []*Raft // raft服务器指针
 	applyErr  []string // from apply channel readers
-	connected []bool   // whether each server is on the net
-	saved     []*Persister
+	connected []bool   // 每个服务器的连接状态
+	saved     []*Persister // 持久化数组
 	endnames  [][]string    // the port file names each sends to
 	logs      []map[int]int // copy of each server's committed entries
-	start     time.Time     // time at which make_config() was called
+	start     time.Time     // 开始创建时间 time at which make_config() was called 
 	// begin()/end() statistics
 	t0        time.Time // time at which test_test.go called cfg.begin()
 	rpcs0     int       // rpcTotal() at start of test
@@ -55,7 +55,10 @@ type config struct {
 }
 
 var ncpu_once sync.Once
-
+/*
+创建配置 : 
+n int : raft服务器个数
+*/
 func make_config(t *testing.T, n int, unreliable bool) *config {
 	ncpu_once.Do(func() {
 		if runtime.NumCPU() < 2 {
@@ -63,32 +66,32 @@ func make_config(t *testing.T, n int, unreliable bool) *config {
 		}
 		rand.Seed(makeSeed())
 	})
-	runtime.GOMAXPROCS(4)
-	cfg := &config{}
+	runtime.GOMAXPROCS(4) // 使用四个线程调度协程
+	cfg := &config{} // 创建对象
 	cfg.t = t
-	cfg.net = labrpc.MakeNetwork()
-	cfg.n = n
+	cfg.net = labrpc.MakeNetwork() // 创建模拟的网络
+	cfg.n = n // 服务器数量
 	cfg.applyErr = make([]string, cfg.n)
-	cfg.rafts = make([]*Raft, cfg.n)
-	cfg.connected = make([]bool, cfg.n)
+	cfg.rafts = make([]*Raft, cfg.n) 
+	cfg.connected = make([]bool, cfg.n) 
 	cfg.saved = make([]*Persister, cfg.n)
 	cfg.endnames = make([][]string, cfg.n)
 	cfg.logs = make([]map[int]int, cfg.n)
 	cfg.start = time.Now()
 
-	cfg.setunreliable(unreliable)
+	cfg.setunreliable(unreliable) // 设置是否可靠
 
-	cfg.net.LongDelays(true)
+	cfg.net.LongDelays(true) // 长连接
 
 	// create a full set of Rafts.
 	for i := 0; i < cfg.n; i++ {
 		cfg.logs[i] = map[int]int{}
-		cfg.start1(i)
+		cfg.start1(i) // 创建并开启第i个服务器,并连接所有raft服务器,如若以前有其状态则恢复。
 	}
 
 	// connect everyone
 	for i := 0; i < cfg.n; i++ {
-		cfg.connect(i)
+		cfg.connect(i) // 使得其他服务器连接当前服务器
 	}
 
 	return cfg
@@ -144,7 +147,7 @@ func (cfg *config) start1(i int) {
 
 	// a fresh set of ClientEnds.
 	ends := make([]*labrpc.ClientEnd, cfg.n)
-	for j := 0; j < cfg.n; j++ {
+	for j := 0; j < cfg.n; j++ { // 第i个raft服务器连接每个服务器
 		ends[j] = cfg.net.MakeEnd(cfg.endnames[i][j])
 		cfg.net.Connect(cfg.endnames[i][j], j)
 	}
@@ -155,6 +158,10 @@ func (cfg *config) start1(i int) {
 	// new instance's persisted state.
 	// but copy old persister's content so that we always
 	// pass Make() the last persisted state.
+	// 一个新的persister，所以旧的实例不会被覆盖
+	// 新实例的持久化状态。
+	// 但复制老persister的内容，使我们总是
+	// 传递Make()最后一个持久化状态。
 	if cfg.saved[i] != nil {
 		cfg.saved[i] = cfg.saved[i].Copy()
 	} else {
@@ -202,7 +209,7 @@ func (cfg *config) start1(i int) {
 		}
 	}()
 
-	rf := Make(ends, i, cfg.saved[i], applyCh)
+	rf := Make(ends, i, cfg.saved[i], applyCh) // 创建raft服务器
 
 	cfg.mu.Lock()
 	cfg.rafts[i] = rf
@@ -298,7 +305,7 @@ func (cfg *config) setlongreordering(longrel bool) {
 func (cfg *config) checkOneLeader() int {
 	for iters := 0; iters < 10; iters++ {
 		ms := 450 + (rand.Int63() % 100)
-		time.Sleep(time.Duration(ms) * time.Millisecond)
+		time.Sleep(time.Duration(ms) * time.Millisecond) // 随机睡眠
 
 		leaders := make(map[int][]int)
 		for i := 0; i < cfg.n; i++ {

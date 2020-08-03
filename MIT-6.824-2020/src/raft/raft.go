@@ -66,10 +66,10 @@ type ApplyMsg struct {
 //
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
-	peers     []*labrpc.ClientEnd // RPC end points of all peers
+	peers     []*labrpc.ClientEnd // RPC end points of all peers RPC所有对等点的端点,依赖该属性进行rpc通信。
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
-	dead      int32               // set by Kill()
+	dead      int32               // set by Kill() 服务器是否死亡...
 
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
@@ -141,6 +141,8 @@ func (rf *Raft) readPersist(data []byte) {
 // 字段名称必须以大写字母开头!
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+	Requester int // 请求者
+	CurrVoteTimes int // 当前选举的届数
 }
 
 //
@@ -149,11 +151,14 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+	ReplyStatus int // 答复状态
+	Replyer // 答复者
 }
 
 //
 // example RequestVote RPC handler.
 //
+// 接收投票消息,并返回结果。
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 }
@@ -187,6 +192,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
 //
+// 向编号为i的服务器发送投票消息
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
@@ -277,6 +283,73 @@ Make()必须快速返回，因此它应该为任何长时间运行的工作启�
 
 思考 : 还是定时器问题.
 如何判断谁是领导呢?
+
+概述 : 
+	在Raft中，有两个超时(选举超时和心跳超时)设置可控制选举。
+	首先是选举超时。
+	选举超时 : 选举超时是指追随者成为候选人之前的等待时间。
+	选举超时被随机分配在150毫秒至300毫秒之间。
+	选举超时后，关注者成为候选人并开始新的选举任期 ...
+	为自己投票...并将请求投票消息发送给其他节点。
+	如果接收节点在这个学期还没有投票，那么它将投票给候选人。
+	...并且节点重置其选举超时。一旦候选人获得多数票，它就会成为领导者。
+	领导者开始向其关注者发送“ 添加条目”消息。这些消息以心跳超时指定的时间间隔发送。
+	跟随者然后响应每个追加条目消息。
+	此选举任期将持续到追随者停止接收心跳并成为候选人为止。
+
+	让我们停止领导，观察选举连任。
+	节点B现在是任期2的负责人。
+	要获得多数票，可以保证每学期只能选出一位领导人。
+	如果两个节点同时成为候选节点，则可能会发生拆分表决。
+	让我们看一个分割投票的例子...
+	两个节点都开始以相同的任期进行选举...
+	...每个都先到达一个跟随者节点。
+	现在，每位候选人都有2票，并且在这个任期中将无法获得更多选票。
+	则超时等待新的任期..
+
+问题 : 
+	1) 如何保证只有一个领导者。
+
+
+跟随者 <-> 候选人 -> 领导者
+两种超时 : 
+	1) 心跳超时 : 跟随者在一段时间没有收到心跳包,自动开启选举超时。
+	2) 选举超时 : 选举超时被随机分配在150毫秒至300毫秒之间。
+	如若选举超时则自己到下一期选举状态去。开启新一轮投票。
+关系转换条件 :
+	群众超时没收到心跳包,自动成为候选人。
+	候选人得到大多数选票,升级成为领导者。
+	候选人未得到大多数选票,退回群众。
+	领导者如若没有死,就一直是领导者。
+选票行为规范 :
+	1) 只要有人说 : 我是领导,那么所有人都会认为他是领导。
+	2) 只要心跳超时,马上就变候选人了。
+	3) 如若已经有一半一直无法恢复,则无法选出新的领导。
+	4) 对于一轮选举而言
+		每个候选者都会记载自己的投票结果(三种) : 赞成,反对,无响应。
+		每个追随者 : 这轮选了谁。
+情境状态 : 
+	1) 如若当前集群中存在领导,则存在所有的状态可能。
+	但无论其他人处于什么状态。收到了领导的心跳包,就认为他是领导(他是具有大多数票的)。
+	如若当前无领导,则可能存在两种状态 : 追随者, 候选人。
+	2) 无论如何,如若一个raft得到大多数选票,则直接向 状态1) 转换。
+	其他人不可能再拿到大多数选票了。
+	问题 : 是否存在当前领导当选,但某一raft以为自己进入新一轮选举了?
+	回答 : 可能。
+	问题 : 如何避免上述问题导致可能选出两个领导来?
+		× 1) 就算他进入了第 x + 1 轮选举,其他显示已经投了 x 轮任期领导的raft只要不支持他的工作就行。
+			理论上可行,但是与选举状态的举措冲突(只要有更新的选举任期投票请求,就投)。
+		√? 2) 他会发选票给领导,领导直接驳回就行了。
+			这似乎与 得到大多数选票立刻成为领导 的决策有冲突,因为可能在没被驳回之前就已经得到大多数选票了。
+			
+选举状态分析/选举任期分析/候选人与追随者行为分析 : 
+	1) 存在一个候选者
+		1) 候选者掌握的选举周期最大。 
+			追随者 : 收到投票后,同步选举周期为候选人选举周期。然后投票。
+		2) 候选人掌握的选举周期比所有追随者都小
+			追随者 : 收到投票后,直接投反对票(存疑)。
+	2) 存在多个候选者
+		
 */
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
