@@ -129,15 +129,15 @@ func (e *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bo
 	req := reqMsg{}
 	req.endname = e.endname
 	req.svcMeth = svcMeth
-	req.argsType = reflect.TypeOf(args)
-	req.replyCh = make(chan replyMsg)
+	req.argsType = reflect.TypeOf(args) // 通过反射得到类型
+	req.replyCh = make(chan replyMsg) // 创建答复的管道
 
 	qb := new(bytes.Buffer)
 	qe := labgob.NewEncoder(qb)
-	qe.Encode(args)
-	req.args = qb.Bytes()
+	qe.Encode(args) // 序列化?
+	req.args = qb.Bytes() // 得到二进制数
 
-	select {
+	select { // 检测管道消息,如若管道被关闭,返回false,否则表示成功收到消息。
 	case e.ch <- req:
 		// ok
 	case <-e.done:

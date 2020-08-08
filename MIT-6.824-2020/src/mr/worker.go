@@ -43,11 +43,11 @@ func Worker(mapf func(string, string) []KeyValue,
 	registerTable := RegisterTable{}
 	registerResult := RegisterResult{}
 	// 请求任务
-	if (!call("Master.RegisterWorker", &registerTable, &registerResult, false, 0)){
+	if !call("Master.RegisterWorker", &registerTable, &registerResult, false, 0) {
 		fmt.Println("call Master.RegisterWorker failed.程序退出。")
 		return 
 	} 
-	wuid := registerResult.WUID;
+	wuid := registerResult.WUID
 	// 循环请求任务
 	for true {
 		application := Application{
@@ -55,7 +55,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		}
 		taskMessage := TaskMessage{}
 		// 请求任务
-		if (!call("Master.GetTask", &application, &taskMessage, false, 0)){
+		if !call("Master.GetTask", &application, &taskMessage, false, 0) {
 			fmt.Println("call Master.GetTask failed.程序退出。")
 			return 
 		} 
@@ -66,13 +66,13 @@ func Worker(mapf func(string, string) []KeyValue,
 			SubmitType : uint32(1),
 		}
 		submitResult := SubmitResult{}
-		taskType := taskMessage.TaskType;
+		taskType := taskMessage.TaskType
 		taskId := taskMessage.TaskId
-		fmt.Printf("taskMessage : %v, taskType : %x, taskId ： %x\n",taskMessage ,taskType, taskId)
+		fmt.Printf("taskMessage : %v\n",taskMessage)
 		switch taskType {
 		case 1:
 			// 如若收到任务就超时了。
-			if (taskMessage.TimeStamp <= time.Now().UnixNano()){
+			if taskMessage.TimeStamp <= time.Now().UnixNano() {
 				fmt.Println("map %d 收到任务就超时了。",taskId)
 				continue
 			}
@@ -167,8 +167,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			continue
 		}
 		// 提交任务失败,表示master可能宕机了,但这个时候不退出。而是等再次申请任务时退出。
-		if (!call("Master.SubmitTask", &submitMessage, &submitResult, true, taskMessage.TimeStamp - 10000000)){ // 提前十毫秒。
-			fmt.Printf("call Master.SubmitTask failed, taskMessage : %v, taskType : %x, taskId ： %x\n",taskMessage ,taskType, taskId)
+		if !call("Master.SubmitTask", &submitMessage, &submitResult, true, taskMessage.TimeStamp - 10000000) { // 提前十毫秒。
+			fmt.Printf("call Master.SubmitTask failed, taskMessage : %v\n",taskMessage)
 			continue
 		}
 	}
@@ -187,7 +187,7 @@ func call(rpcname string, args interface{}, reply interface{}, startTimeout bool
 	}
 	defer conn.Close()
 
-	if startTimeout{
+	if startTimeout {
     	conn.SetReadDeadline(time.Unix(0, timeout)) // 第一个参数为秒,第二个为纳秒
 	}
 	/*

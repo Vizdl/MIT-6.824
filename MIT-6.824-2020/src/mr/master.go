@@ -80,6 +80,7 @@ type Master struct {
 	workerMap map[uint32]uint32 	/* key : wuid, value : taskid, 如若当前worker无有效任务,则value=NOTASK*/
 	timeoutLimits []int64			/* 单位:纳秒,每次未完成,都将超时时间提升2数倍 */
 	eventChan chan Event			/* 事件管道 */
+	taskTimers []*time.Timer		/* 各个任务的定时器,用来关闭定时任务,只有在任务已分配出去时才有效。 */
 }
 
 /////////////////////////////////////////////=///////////////////////////////////// 静态lib函数 ////////////////////////////////////////////////////////////////////////////////////////
@@ -154,18 +155,16 @@ timeout : 超时时间戳。
 taskId : 需定时的任务ID
 wuid : 获取到任务号为taskId的worker的唯一ID。
 */
-func (m *Master) taskTimer(wuid uint32, taskId uint32, timeout int64){
+func (m *Master) taskTimer(wuid uint32, taskId uint32, timeout int64) *time.Timer{
 	// 设置定时器,经过实验,如果limit是负数就直接事件发生。
 	limit:= time.Duration(timeout - time.Now().UnixNano()) * time.Nanosecond // 会有微量不可避免的偏差
-	timeoutEvent := time.NewTimer(limit)
-	<-timeoutEvent.C // 等待超时事件发生
-	m.eventChan <- Event{
-		TaskId : taskId,
-		WUID : wuid,
-		Code : TimeoutEvent,
-	}
-	timeoutEvent.Stop()
-	return 
+	return  time.AfterFunc(limit, func(){ // 在超时候自动调用
+		m.eventChan <- Event{
+			TaskId : taskId,
+			WUID : wuid,
+			Code : TimeoutEvent,
+		}
+	})
 }
 
 
@@ -183,13 +182,12 @@ func (m *Master) eventExecuter(event Event){
 	switch event.Code{
 	case TimeoutEvent: // 超时
 		m.cancelIssuedTask(event.TaskId)
-		m.workerMap[event.WUID] = NOTASK
 		break
 	case CompletedEvent: // 完成
 		m.finishIssuedTask(event.TaskId)
-		m.workerMap[event.WUID] = NOTASK
 		break
 	}
+	m.workerMap[event.WUID] = NOTASK
 }
 
 /////////////////////////////////////////////////////////////////////////////////////// PUBLIC ///////////////////////////////////////////////////////////////////////////////////////
@@ -244,7 +242,7 @@ func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) er
 				(*firstRunTask)[i] = task
 				(*firstTask)[i] = nil
 				// 大概估计 : 一次取余运算需要五个时钟周期(50ns)。
-				go m.taskTimer(application.WUID, uint32(i), (*task).TimeStamp)
+				m.taskTimers[i] = m.taskTimer(application.WUID, uint32(i), (*task).TimeStamp)
 				break
 			}
 		}
@@ -260,15 +258,27 @@ SubmitTask : 提交任务,告知master当前自己的任务状态(可能成功�
 已派发 -> 已完成
 已派发 -> 未派发
 */
-func (m *Master) SubmitTask(submitMessage *SubmitMessage, submitResult *SubmitResult)error{
+func (m *Master) SubmitTask(submitMessage *SubmitMessage, submitResult *SubmitResult) error {
+	submitResult.IsSucceed = false
 	switch submitMessage.SubmitType{
 	case 1 :
 		fmt.Printf("submitMessage value :  %v\tBEGIN\n", submitMessage)
 		fmt.Println("m.completedEvents[",submitMessage.TaskId,"]:", len(m.completedEvents[submitMessage.TaskId]))
-		m.eventChan <- Event{
-			TaskId : submitMessage.TaskId,
-			WUID : submitMessage.WUID,
-			Code : CompletedEvent,
+
+		m.mu.Lock()
+		tid,exist := m.workerMap[submitMessage.WUID]
+		// 为了避免关闭错了定时器。
+		if exist && tid == submitMessage.TaskId && m.taskTimers[submitMessage.TaskId] != nil {
+			submitResult.IsSucceed = m.taskTimers[submitMessage.TaskId].Stop()
+		}
+		m.mu.Unlock()
+
+		if submitResult.IsSucceed {
+			m.eventChan <- Event{
+				TaskId : submitMessage.TaskId,
+				WUID : submitMessage.WUID,
+				Code : CompletedEvent,
+			}
 		}
 		fmt.Printf("submitMessage value :  %v\tEND\n", submitMessage)
 		break
@@ -325,6 +335,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 		timeoutLimits : make([]int64, Max(nMap, nReduce)),
 		workerMap : make(map[uint32]uint32),
 		eventChan : make(chan Event, 1024),
+		taskTimers : make([]*time.Timer, Max(nMap, nReduce)),
 	}
 	for i := 0; i < len(m.completedEvents); i++{
 		m.completedEvents[i] = make(chan struct{})
