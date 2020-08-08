@@ -42,7 +42,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	// 注册成为对应master的worker
 	registerTable := RegisterTable{}
 	registerResult := RegisterResult{}
-	// 请求任务
+	// 向Master注册成为Worker
 	if !call("Master.RegisterWorker", &registerTable, &registerResult, false, 0) {
 		fmt.Println("call Master.RegisterWorker failed.程序退出。")
 		return 
@@ -63,17 +63,15 @@ func Worker(mapf func(string, string) []KeyValue,
 			WUID : wuid,
 			TaskType : taskMessage.TaskType,
 			TaskId : taskMessage.TaskId,
-			SubmitType : uint32(1),
+			SubmitType : Completed,
 		}
 		submitResult := SubmitResult{}
-		taskType := taskMessage.TaskType
-		taskId := taskMessage.TaskId
 		fmt.Printf("taskMessage : %v\n",taskMessage)
-		switch taskType {
-		case 1:
+		switch taskMessage.TaskType {
+		case MapTask:
 			// 如若收到任务就超时了。
 			if taskMessage.TimeStamp <= time.Now().UnixNano() {
-				fmt.Println("map %d 收到任务就超时了。",taskId)
+				fmt.Println("map %d 收到任务就超时了。",taskMessage.TaskId)
 				continue
 			}
 			// 打开输入文件
@@ -99,17 +97,17 @@ func Worker(mapf func(string, string) []KeyValue,
 			// 创建输出文件表
 			uuu := 0
 			for i := 0; i < taskMessage.NReduce; i++ {
-				file, _ := os.Create(fmt.Sprintf("%s/mr-%d-%d", taskMessage.Dir, taskId, i))
+				file, _ := os.Create(fmt.Sprintf("%s/mr-%d-%d", taskMessage.Dir, taskMessage.TaskId, i))
 				encoder := json.NewEncoder(file)
 				encoder.Encode(intermediates[i])
 				uuu+= len(intermediates[i])
 				file.Close()
 			}
 			break
-		case 2: // reduce
+		case ReduceTask:
 			// 如若收到任务就超时了。
-			if (taskMessage.TimeStamp <= time.Now().UnixNano()){
-				fmt.Println("reduce %d 收到任务就超时了。",taskId)
+			if taskMessage.TimeStamp <= time.Now().UnixNano(){
+				fmt.Println("reduce %d 收到任务就超时了。",taskMessage.TaskId)
 				continue
 			}
 			intermediate := []KeyValue{}
@@ -121,8 +119,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			times := 0
 			for _, v := range dir_list {
-				match,_ := regexp.MatchString(fmt.Sprintf("mr-([1-9][0-9]*|0)-%d$", taskId),v.Name()) /* 正则表达式不能有空格 */
-				if match { // 如若匹配则添加到输入中
+				match,_ := regexp.MatchString(fmt.Sprintf("mr-([1-9][0-9]*|0)-%d$", taskMessage.TaskId),v.Name())
+				if match {
 					var temp []KeyValue
 					// 打开这个文件
 					file ,_ := os.Open(taskMessage.Dir + "/" + v.Name())
@@ -136,7 +134,7 @@ func Worker(mapf func(string, string) []KeyValue,
 					times++
 				}
 			}
-			fmt.Printf("reduce 任务号为 : %d, 输入文件个数 : %d, 键值对的个数有 : %d\n", taskId, times, len(intermediate))
+
 			// 排序
 			sort.Sort(ByKey(intermediate))
 			// 分类然后reduce
@@ -161,10 +159,8 @@ func Worker(mapf func(string, string) []KeyValue,
 				i = j
 			}
 			break
-		default :// wait
-			// 睡眠然后继续
-			time.Sleep(time.Second)
-			continue
+		default :
+			panic("worker.go/worker : 未定义的任务类型")
 		}
 		// 提交任务失败,表示master可能宕机了,但这个时候不退出。而是等再次申请任务时退出。
 		if !call("Master.SubmitTask", &submitMessage, &submitResult, true, taskMessage.TimeStamp - 10000000) { // 提前十毫秒。

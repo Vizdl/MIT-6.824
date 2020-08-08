@@ -12,7 +12,7 @@ import "time"
 
 const NOTASK = 0xffffffff  		/* 2^32-1为没有任务,任务号不允许等于它 */
 const MAXWUID = 0xffffffff 		/* 最大为 2^32 - 1 */
-
+const INITTIMEOUTLIMIE = 100000000
 /*
 	对于整体任务有四种状态 : 
 	MASTERMAP : 正常初始化后就是 MAP
@@ -25,7 +25,6 @@ const (
     MasterMap EMasterStatus = iota       
     MasterReduce            
 	MasterComplete
-	MasterFailed
 )
 
 
@@ -66,6 +65,7 @@ type Master struct {
 	nReduce int						/* reduce任务数 */
 	completedEvents[]chan struct{} 	/* 任务完成事件组,管道不需要锁保护,因为两个线程调用的是两段,并且是线程安全的。*/
 	mu sync.Mutex					/* 用来保护服务器状态 */
+	cond *sync.Cond					/* 条件变量,请求任务时无任务用来等待 */
 
 
 	/* 以下都是服务器的状态 */
@@ -127,6 +127,7 @@ func (m *Master) cancelIssuedTask (taskId uint32){
 	if m.timeoutLimits[taskId] & (1 << 61) == 0{ // 防止溢出
 		m.timeoutLimits[taskId] <<= 1	// 增加超时时长
 	}
+	m.cond.Signal()
 	return 
 }
 
@@ -137,6 +138,7 @@ func (m *Master) finishIssuedTask (taskId uint32){
 			m.states = MasterReduce
 			m.unsent = m.nReduce
 			m.uncompleted = m.nReduce
+			m.cond.Broadcast()
 		}else if m.states == MasterReduce {
 			m.states = MasterComplete
 			m.unsent = 0
@@ -223,31 +225,24 @@ func (m *Master) GetTask (application *Application, taskMessage *TaskMessage) er
 		fmt.Println(application.WUID," 的任务请求出错")
 		return nil
 	}
-	if m.unsent <= 0 {
-		temp := TaskMessage{
-			TaskType : WaitTask,
-			TaskId : uint32(0),
-			File : "",
-			Dir : "", 
-			NReduce : m.nReduce,
-		}
-		*taskMessage = *(&temp)
-	} else {
-		firstTask ,firstRunTask := m.getCurrTaskSArrPairPtr()
-		for i, task := range (*firstTask) {
-			if task != nil {
-				(*task).TimeStamp = time.Now().UnixNano() + m.timeoutLimits[i]
-				m.workerMap[application.WUID] = uint32(i)
-				*taskMessage = *task
-				(*firstRunTask)[i] = task
-				(*firstTask)[i] = nil
-				// 大概估计 : 一次取余运算需要五个时钟周期(50ns)。
-				m.taskTimers[i] = m.taskTimer(application.WUID, uint32(i), (*task).TimeStamp)
-				break
-			}
-		}
-		m.unsent--
+	// 当前暂时没有任务。
+	for m.unsent <= 0 {
+		m.cond.Wait()
 	}
+	firstTask ,firstRunTask := m.getCurrTaskSArrPairPtr()
+	for i, task := range (*firstTask) {
+		if task != nil {
+			(*task).TimeStamp = time.Now().UnixNano() + m.timeoutLimits[i]
+			m.workerMap[application.WUID] = uint32(i)
+			*taskMessage = *task
+			(*firstRunTask)[i] = task
+			(*firstTask)[i] = nil
+			// 大概估计 : 一次取余运算需要五个时钟周期(50ns)。
+			m.taskTimers[i] = m.taskTimer(application.WUID, uint32(i), (*task).TimeStamp)
+			break
+		}
+	}
+	m.unsent--
 	return nil
 }
 
@@ -261,7 +256,7 @@ SubmitTask : 提交任务,告知master当前自己的任务状态(可能成功�
 func (m *Master) SubmitTask(submitMessage *SubmitMessage, submitResult *SubmitResult) error {
 	submitResult.IsSucceed = false
 	switch submitMessage.SubmitType{
-	case 1 :
+	case Completed :
 		fmt.Printf("submitMessage value :  %v\tBEGIN\n", submitMessage)
 		fmt.Println("m.completedEvents[",submitMessage.TaskId,"]:", len(m.completedEvents[submitMessage.TaskId]))
 
@@ -309,8 +304,7 @@ func (m *Master) server() {
 func (m *Master) Done() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ret := m.states == MasterComplete || m.states == MasterFailed
-	return ret
+	return m.states == MasterComplete
 }
 
 /*
@@ -337,20 +331,20 @@ func MakeMaster(files []string, nReduce int) *Master {
 		eventChan : make(chan Event, 1024),
 		taskTimers : make([]*time.Timer, Max(nMap, nReduce)),
 	}
+	m.cond = sync.NewCond(&m.mu)
 	for i := 0; i < len(m.completedEvents); i++{
 		m.completedEvents[i] = make(chan struct{})
 	}
 	// 设置初始timeout
 	for i := 0; i < len(m.timeoutLimits); i++ {
-		m.timeoutLimits[i] = 100000000 
+		m.timeoutLimits[i] = INITTIMEOUTLIMIE
 	}
 	
 	// 核查文件系统是否存在files内文件
 	for _, filename := range files {
 		file, err := os.Open(filename)
 		if err != nil {
-			m.states = MasterFailed
-			log.Fatalf("cannot open %v", filename)
+			panic(err)
 		}
 		file.Close()
 	}

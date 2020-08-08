@@ -8,9 +8,14 @@ package mr
 
 type ETaskType int32
 const (
-	WaitTask ETaskType = iota
-    MapTask 
+    MapTask ETaskType = iota
     ReduceTask       
+)
+
+
+type ESubmitType uint32
+const (
+	Completed ESubmitType = iota
 )
 /*
 注册表 : 如若注册失败,换一个ID继续注册。
@@ -30,7 +35,7 @@ type SubmitMessage struct{
 	WUID uint32 // Worker唯一ID
 	TaskType ETaskType
 	TaskId uint32 
-	SubmitType uint32
+	SubmitType ESubmitType
 }
 
 type TaskMessage struct{
