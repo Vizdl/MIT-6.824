@@ -62,33 +62,33 @@ func TestReElection2A(t *testing.T) {
 	leader1 := cfg.checkOneLeader()
 
 	// if the leader disconnects, a new one should be elected.
-	fmt.Printf("Test (2A): 断开第 %d 台服务器的网络连接\n",leader1)
 	cfg.disconnect(leader1)
+	fmt.Printf("Test (2A): 断开第 %d 台服务器的网络连接\n",leader1)
 	cfg.checkOneLeader()
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader.
-	fmt.Printf("Test (2A): 连接第 %d 台服务器的网络连接\n",leader1)
 	cfg.connect(leader1)
+	fmt.Printf("Test (2A): 连接第 %d 台服务器的网络连接\n",leader1)
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no leader should
 	// be elected.
-	fmt.Printf("Test (2A): 断开第 %d 台服务器的网络连接\n",leader2)
 	cfg.disconnect(leader2)
-	fmt.Printf("Test (2A): 断开第 %d 台服务器的网络连接\n",(leader2 + 1) % servers)
+	fmt.Printf("Test (2A): 断开第 %d 台服务器的网络连接\n",leader2)
 	cfg.disconnect((leader2 + 1) % servers)
+	fmt.Printf("Test (2A): 断开第 %d 台服务器的网络连接\n",(leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
 
 	// if a quorum arises, it should elect a leader.
-	fmt.Printf("Test (2A): 连接第 %d 台服务器的网络连接\n",(leader2 + 1) % servers)
 	cfg.connect((leader2 + 1) % servers)
+	fmt.Printf("Test (2A): 连接第 %d 台服务器的网络连接\n",(leader2 + 1) % servers)
 	cfg.checkOneLeader()
 
 	// re-join of last node shouldn't prevent leader from existing.
-	fmt.Printf("Test (2A): 连接第 %d 台服务器的网络连接\n",leader2)
 	cfg.connect(leader2)
+	fmt.Printf("Test (2A): 连接第 %d 台服务器的网络连接\n",leader2)
 	cfg.checkOneLeader()
 
 	cfg.end()
