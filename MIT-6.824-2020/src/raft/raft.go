@@ -50,11 +50,11 @@ const (
 )
 
 const NOLEADER = -1
-const MINHEARTBEATTIMEOUT int64 = 1500000000
-const HEARTBEATTIMEOUTSECTIONSIZE int64 = 3000000000 // 如若为负数会报错
-const MINVOTETIMEOUT int64 = 1500000000
-const VOTETIMEOUTTIMEOUTSECTIONSIZE int64 = 1500000000 // 如若为负数会报错
-const HEARTBEATTIMEOUT int64 = 700000000
+const MINHEARTBEATTIMEOUT int64 = 100000000
+const HEARTBEATTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
+const MINVOTETIMEOUT int64 = 100000000
+const VOTETIMEOUTTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
+const HEARTBEATTIMEOUT int64 = 70000000
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -124,7 +124,7 @@ type Raft struct {
 func (rf *Raft) voteTimeoutEventProc(){
 	rf.mu.Lock() // 只要进入了这个函数,就必定是是超时。
 	defer rf.mu.Unlock()
-	fmt.Println("第",rf.me,"台服务器,第",rf.CurrTerm,"届发生选举超时")
+	rf.voteTimeoutEventProcLog()
 	if rf.raftStatus != RaftCandidate{
 		log.Fatal("第",rf.me,"台服务器在第",rf.CurrTerm,"届发生选举超时, raftStatus =",rf.raftStatus,"错误的raft状态")
 	}
@@ -138,6 +138,9 @@ func (rf *Raft) voteTimeoutEventProc(){
 		rf.acquiredVoteStatus[i] = i == rf.me
 	}
 	rf.currLeader = NOLEADER
+	limit := time.Duration(MINVOTETIMEOUT + rand.Int63n(VOTETIMEOUTTIMEOUTSECTIONSIZE))
+	rf.voteTimer = time.AfterFunc(limit, rf.voteTimeoutEventProc) // 开启选举超时
+	go rf.asCandidate(rf.CurrTerm)
 	rf.cond.Broadcast() // 避免关闭定时器失败时,主线程堵塞在条件变量里面了。
 }
 
@@ -151,7 +154,7 @@ func (rf *Raft) heartTimeoutEventProc() {
 	if rf.raftStatus != RaftFollower {
 		log.Fatal("第",rf.me,"台服务器在第",rf.CurrTerm,"届发生心跳超时, raftStatus =",rf.raftStatus,"错误的raft状态")
 	}
-	fmt.Println("第",rf.me,"台服务器在第 ",rf.CurrTerm," 届发生心跳超时")
+	rf.heartTimeoutEventProcLog()
 	if rf.heartbeatTimer != nil { // 对心跳定时器做处理
 		//rf.heartbeatTimer.Stop()
 		rf.heartbeatTimer = nil
@@ -164,19 +167,20 @@ func (rf *Raft) heartTimeoutEventProc() {
 	}
 	rf.currLeader = NOLEADER
 	rf.raftStatus = RaftCandidate
-	rf.cond.Broadcast()
+	limit := time.Duration(MINVOTETIMEOUT + rand.Int63n(VOTETIMEOUTTIMEOUTSECTIONSIZE))
+	rf.voteTimer = time.AfterFunc(limit, rf.voteTimeoutEventProc) // 开启选举超时
+	go rf.asCandidate(rf.CurrTerm)
 }
 
 
-func (rf *Raft) asCandidate () {
-	limit := time.Duration(MINVOTETIMEOUT + rand.Int63n(VOTETIMEOUTTIMEOUTSECTIONSIZE))
-	rf.voteTimer = time.AfterFunc(limit, rf.voteTimeoutEventProc) // 开启选举超时
+func (rf *Raft) asCandidate (CurrTerm uint32) {
 	args := RequestVoteArgs{
 		Requester : rf.me,
-		CurrTerm : rf.CurrTerm,
+		CurrTerm : CurrTerm,
 	}
-	CurrTerm := rf.CurrTerm
 	voteSucceed := false
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	for rf.raftStatus == RaftCandidate && rf.CurrTerm == CurrTerm && !voteSucceed {
 		for i := 0; i < len(rf.peers); i++{
 			if !rf.acquiredVoteStatus[i] {
@@ -185,7 +189,6 @@ func (rf *Raft) asCandidate () {
 				reply := RequestVoteReply{}
 				rf.sendRequestVote(i, &args, &reply)
 				rf.mu.Lock()
-				fmt.Println("第",rf.me,"台服务器向第",i,"台服务器发起投票请求,请求结果为 :",reply)
 				// 看一下投票请求过程中是否有事件发生,如若状态发生改变,则退出。
 				if rf.raftStatus != RaftCandidate || rf.CurrTerm != CurrTerm {
 					break
@@ -194,21 +197,22 @@ func (rf *Raft) asCandidate () {
 					if rf.voteTimer.Stop(){ // 如若关闭成功,则直接变成下一届的追随者,如若失败,等待超时事件发生
 						rf.CurrTerm = reply.CurrTerm
 						rf.raftStatus = RaftFollower
+						limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
+						rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 					}else {
-						for rf.raftStatus == RaftCandidate && rf.CurrTerm == CurrTerm { // 等待超时事件发生。
+						for rf.raftStatus == RaftCandidate && rf.CurrTerm == CurrTerm {
 							rf.cond.Wait()
 						}
 					}
 					break
 				}
-				// 当前状态下仍然是当前届投票状态
 				if reply.ReplyStatus && !rf.acquiredVoteStatus[reply.Replyer] {
 					rf.acquiredVoteStatus[reply.Replyer] = true
 					rf.acquiredVote++
 					if rf.acquiredVote >= rf.acquiredVote / 2 + 1 {
 						if rf.voteTimer.Stop(){
 							voteSucceed = true
-						}else { // 进入条件变量等待唤醒
+						}else { // 进入条件变量等待唤醒(主要是为了避免再次进入下一次循环,致使超时处理函数无法进入,还有就是继续向其他机器发送投票请求。。)
 							for rf.raftStatus == RaftCandidate && rf.CurrTerm == CurrTerm {
 								rf.cond.Wait()
 							}
@@ -221,20 +225,22 @@ func (rf *Raft) asCandidate () {
 	}
 	// 如若投票成功
 	if voteSucceed {
-		fmt.Println("第",rf.me,"台服务器获取大多数选票成为第",rf.CurrTerm,"届的领导者")
+		rf.voteSucceedLog()
 		rf.acquiredVote = 0
 		rf.currLeader = rf.me
 		rf.raftStatus = RaftLeader
+		go rf.asLeader(rf.CurrTerm)
 	}
 }
 
-func (rf *Raft) asLeader () {
+func (rf *Raft) asLeader (CurrTerm uint32) {
 	args := HeartbeatArgs{
 		Sender: rf.me,
-		CurrTerm: rf.CurrTerm,
+		CurrTerm: CurrTerm,
 	}
-	CurrTerm := rf.CurrTerm
-	lastTick := time.Now().UnixNano() - HEARTBEATTIMEOUT
+	lastTick := time.Now().UnixNano() - HEARTBEATTIMEOUT // 确保刚进入就一定能发出心跳
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	for rf.raftStatus == RaftLeader && rf.CurrTerm == CurrTerm {
 		tick := time.Now().UnixNano()
 		if tick - lastTick >= HEARTBEATTIMEOUT {
@@ -245,16 +251,18 @@ func (rf *Raft) asLeader () {
 					rf.mu.Unlock()
 					reply := HeartbeatReply{}
 					rf.sendHeartbeat(i, &args, &reply)
-					rf.mu.Lock()
-					fmt.Printf("第 %d 台服务器作为领导者向第 %d 台服务器发送心跳包,收到回复为 : %v\n",rf.me,i,reply)
+					rf.mu.Lock() // 发生状态转换但可能卡在这里...
+					// 看一下投票请求过程中是否有事件发生,如若状态发生改变,则退出。
+					if rf.raftStatus != RaftLeader || rf.CurrTerm != CurrTerm {
+						break
+					}
 					if reply.CurrTerm > rf.CurrTerm{ // 如若对方任期比我方还大,则我方变为其追随者
 						rf.raftStatus = RaftFollower
 						rf.currLeader = NOLEADER
 						rf.CurrTerm = reply.CurrTerm
 						rf.hasVote = false
-					}
-					// 看一下投票请求过程中是否有事件发生,如若状态发生改变,则退出。
-					if rf.raftStatus != RaftLeader || rf.CurrTerm != CurrTerm {
+						limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
+						rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 						break
 					}
 				}
@@ -262,19 +270,14 @@ func (rf *Raft) asLeader () {
 		}
 		// 根据定时器,来定时堵塞(也可以唤醒)。
 		if rf.raftStatus == RaftLeader && rf.CurrTerm == CurrTerm {
+			// rf.mu.Unlock()
 			time.Sleep(time.Duration(time.Millisecond))
+			// rf.mu.Lock() // 发生状态转换但可能卡在这里...
 		}
 	}
 }
 
-func (rf *Raft) asFollower () {
-	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
-	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
-	CurrTerm := rf.CurrTerm
-	for rf.raftStatus == RaftFollower && CurrTerm == rf.CurrTerm{
-		rf.cond.Wait()
-	}
-}
+
 
 func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatReply) {
 	reply.Replyer = rf.me
@@ -299,8 +302,6 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 		rf.hasVote = true // 其他当前论候选者的投票请求都拒绝。
 		rf.currLeader = args.Sender
 		rf.raftStatus = RaftFollower
-		rf.cond.Broadcast()
-		return
 	}
 	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
 	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
@@ -324,6 +325,8 @@ func (rf *Raft) asCandidateProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatR
 	rf.hasVote = true // 其他当前论候选者的投票请求都拒绝。
 	rf.currLeader = args.Sender
 	rf.raftStatus = RaftFollower
+	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
+	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 }
 
 func (rf *Raft) asLeaderProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatReply) {
@@ -341,6 +344,8 @@ func (rf *Raft) asLeaderProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRepl
 	rf.hasVote = true // 其他当前论候选者的投票请求都拒绝。
 	rf.currLeader = args.Sender
 	rf.raftStatus = RaftFollower
+	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
+	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 }
 
 func (rf *Raft) asFollowerProcRequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
@@ -365,8 +370,6 @@ func (rf *Raft) asFollowerProcRequestVote (args *RequestVoteArgs, reply *Request
 		rf.CurrTerm = args.CurrTerm
 		rf.hasVote = true
 		rf.currLeader = NOLEADER
-		rf.cond.Broadcast()
-		return
 	}
 	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
 	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
@@ -397,6 +400,8 @@ func (rf *Raft) asCandidateProcRequestVote (args *RequestVoteArgs, reply *Reques
 	rf.currLeader = NOLEADER
 	rf.raftStatus = RaftFollower
 	reply.ReplyStatus = true
+	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
+	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 }
 
 func (rf *Raft) asLeaderProcRequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
@@ -415,6 +420,8 @@ func (rf *Raft) asLeaderProcRequestVote(args *RequestVoteArgs, reply *RequestVot
 	rf.hasVote = true // 其他当前论候选者的投票请求都拒绝。
 	rf.currLeader = args.Requester
 	rf.raftStatus = RaftFollower
+	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
+	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 }
 
 // return currentTerm and whether this server
@@ -531,7 +538,7 @@ func (rf *Raft) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) {
 	default:
 		log.Fatal(rf.me,"当前处于未注册的状态中 : rf.raftStatus = ",rf.raftStatus)
 	}
-	fmt.Printf("第 %d 台服务器在第 %d 届以状态 %d 的形式收到心跳包 : %v, 答复为 : %v\n",rf.me,CurrTerm,raftStatus,args,reply)
+	rf.HeartbeatLog(CurrTerm, raftStatus, args, reply)
 }
 
 
@@ -564,7 +571,7 @@ func (rf *Raft) RequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
 	default:
 		log.Fatal(rf.me,"当前处于未注册的状态中 : rf.raftStatus = ",rf.raftStatus)
 	}
-	fmt.Printf("第 %d 台服务器在第 %d 届以状态 %d 的形式收到投票请求 : %v, 答复为 : %v\n",rf.me,CurrTerm,raftStatus,args,reply)
+	rf.RequestVoteLog(CurrTerm, raftStatus, args, reply)
 }
 
 //
@@ -599,11 +606,13 @@ func (rf *Raft) RequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
 // 向编号为i的服务器发送投票消息
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	rf.sendRequestVoteLog()
 	return ok
 }
 
 func (rf *Raft) sendHeartbeat(server int, args *HeartbeatArgs, reply *HeartbeatReply) bool {
 	ok := rf.peers[server].Call("Raft.Heartbeat", args, reply)
+	rf.sendHeartbeatLog()
 	return ok
 }
 
@@ -657,7 +666,6 @@ func (rf *Raft) Kill() {
 				rf.heartbeatTimer = nil
 			}
 		}
-		rf.cond.Broadcast()
 	}
 	if rf.raftStatus == RaftCandidate{
 		if rf.voteTimer != nil{
@@ -667,44 +675,16 @@ func (rf *Raft) Kill() {
 		}
 	}
 	rf.raftStatus = RaftDead
+	rf.cond.Broadcast()
 	rf.mu.Unlock()
 	rf.dead = 1
-
-	fmt.Printf("第 %d 台服务器在第 %d 届以状态 %d 的形式被杀死\n",rf.me,rf.CurrTerm,rf.raftStatus)
+	rf.killLog()
 }
 
 func (rf *Raft) killed() bool {
 	//z := atomic.LoadInt32(&rf.dead)
-	fmt.Println("Killed")
+	rf.killedLog()
 	return rf.dead == 1
-}
-
-
-
-/*
-函数功能 : 三种模式下表现为三种策略。并且在这三种策略中进行转换。
-*/
-func (rf *Raft) run () {
-	for rf.dead == 0 {
-		rf.mu.Lock()
-		CurrTerm := rf.CurrTerm
-		raftStatus := rf.raftStatus
-		switch rf.raftStatus {
-		case RaftFollower :
-			rf.asFollower()
-			break
-		case RaftCandidate :
-			rf.asCandidate()
-			break
-		case RaftLeader :
-			rf.asLeader()
-			break
-		default:
-			panic("未定义的状态")
-		}
-		fmt.Println("第",rf.me,"台服务器状态从 {CurrTerm,raftStatus} : {", CurrTerm, ",",raftStatus, "} 转换为 {", rf.CurrTerm, ",",rf.raftStatus, "}")
-		rf.mu.Unlock()
-	}
 }
 
 //
@@ -744,11 +724,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	}
 	rf.cond = sync.NewCond(&rf.mu)
 	// Your initialization code here (2A, 2B, 2C).
-
+	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
+	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 	// initialize from state persisted before a crash
-	// 在崩溃前从持久化状态进行初始化
 	rf.readPersist(persister.ReadRaftState())
-
-	go rf.run()
 	return rf
 }

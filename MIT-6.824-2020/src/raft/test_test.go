@@ -17,7 +17,7 @@ import "sync"
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
-const RaftElectionTimeout = 10000 * time.Millisecond
+const RaftElectionTimeout = 1000 * time.Millisecond
 
 
 /*
