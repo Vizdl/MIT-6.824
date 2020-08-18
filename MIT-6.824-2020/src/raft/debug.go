@@ -16,11 +16,11 @@ func (rf *Raft) heartTimeoutEventProcLog() {
 }
 
 
-func (rf *Raft) sendRequestVoteLog() {
+func (rf *Raft) sendRequestVoteLog(i int, reply *RequestVoteReply) {
 	fmt.Println("第",rf.me,"台服务器向第",i,"台服务器发起投票请求,请求结果为 :",reply)
 }
 
-func (rf *Raft) sendHeartbeatLog(){
+func (rf *Raft) sendHeartbeatLog(i int, reply *HeartbeatReply){
 	fmt.Printf("第 %d 台服务器作为领导者向第 %d 台服务器发送心跳包,收到回复为 : %v\n",rf.me,i,reply)
 }
 

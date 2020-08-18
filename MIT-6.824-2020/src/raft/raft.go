@@ -606,13 +606,13 @@ func (rf *Raft) RequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
 // 向编号为i的服务器发送投票消息
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	rf.sendRequestVoteLog()
+	rf.sendRequestVoteLog(server, reply)
 	return ok
 }
 
 func (rf *Raft) sendHeartbeat(server int, args *HeartbeatArgs, reply *HeartbeatReply) bool {
 	ok := rf.peers[server].Call("Raft.Heartbeat", args, reply)
-	rf.sendHeartbeatLog()
+	rf.sendHeartbeatLog(server, reply)
 	return ok
 }
 
@@ -631,6 +631,15 @@ func (rf *Raft) sendHeartbeat(server int, args *HeartbeatArgs, reply *HeartbeatR
 // the leader.
 //
 /*
+使用raft的服务(例如k/v服务器)想要启动
+下一条命令要附加到raft的日志上。
+如果这服务器不是leader，返回false。
+否则启动同意并立即返回。
+并不能保证指挥将永远被委身于raft上，
+甚至这个领导者可能在选举中失败或失败。
+就算raft实例被杀死了
+这个函数应该优雅地返回。
+
 第一个返回值是命令在提交时出现的索引。
 第二个返回值是本届任期。
 如果该服务器认为自己是leader，则第三个返回值为true。
@@ -644,6 +653,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 
 	return index, term, isLeader
+}
+
+/*
+追加日志?
+*/
+func (rf *Raft) AppendEntries (command interface{}) {
+
 }
 
 //
