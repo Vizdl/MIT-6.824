@@ -50,11 +50,11 @@ const (
 )
 
 const NOLEADER = -1
-const MINHEARTBEATTIMEOUT int64 = 100000000
+const MINHEARTBEATTIMEOUT int64 = 150000000
 const HEARTBEATTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
-const MINVOTETIMEOUT int64 = 100000000
+const MINVOTETIMEOUT int64 = 150000000
 const VOTETIMEOUTTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
-const HEARTBEATTIMEOUT int64 = 70000000
+const HEARTBEATTIMEOUT int64 = 100000000
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -108,7 +108,7 @@ type Raft struct {
 	CurrTerm uint32					/* 当前选举周期 */
 	hasVote	bool					/* 在当前选举周期是否已经投过了票,投给自己也算 */
 	acquiredVote uint				/* 在当前选举周期获得的票数 */
-	acquiredVoteStatus []bool		/* 获取票数的状态,只在候选者状态有用(转换为候选者状态时恢复) */
+	acquiredVoteStatus []bool		/* 对方在当前轮是否给我投过票,即使对方投的是反对票,这里也会变为true */
 	currLeader int					/* 当前届领导者 */
 	heartbeatTimer *time.Timer 		/* 心跳定时器,只有在追随者状态下才有效 */
 	voteTimer *time.Timer 			/* 选举定时器,只有在候选者状态下才有效 */
@@ -187,12 +187,16 @@ func (rf *Raft) asCandidate (CurrTerm uint32) {
 				// 趁着发送消息的间隙,解锁,看看这时候有没有事件发生
 				rf.mu.Unlock()
 				reply := RequestVoteReply{}
-				rf.sendRequestVote(i, &args, &reply)
+				isCalled := rf.sendRequestVote(i, &args, &reply)
 				rf.mu.Lock()
 				// 看一下投票请求过程中是否有事件发生,如若状态发生改变,则退出。
 				if rf.raftStatus != RaftCandidate || rf.CurrTerm != CurrTerm {
 					break
 				}
+				if !isCalled || reply.Replyer != i{ // 调用失败
+					continue
+				}
+				rf.acquiredVoteStatus[i] = true
 				if !reply.ReplyStatus && reply.CurrTerm > rf.CurrTerm{
 					if rf.voteTimer.Stop(){ // 如若关闭成功,则直接变成下一届的追随者,如若失败,等待超时事件发生
 						rf.CurrTerm = reply.CurrTerm
@@ -206,8 +210,7 @@ func (rf *Raft) asCandidate (CurrTerm uint32) {
 					}
 					break
 				}
-				if reply.ReplyStatus && !rf.acquiredVoteStatus[reply.Replyer] {
-					rf.acquiredVoteStatus[reply.Replyer] = true
+				if reply.ReplyStatus && reply.CurrTerm <= rf.CurrTerm{
 					rf.acquiredVote++
 					if rf.acquiredVote >= rf.acquiredVote / 2 + 1 {
 						if rf.voteTimer.Stop(){
@@ -222,6 +225,12 @@ func (rf *Raft) asCandidate (CurrTerm uint32) {
 				}
 			}
 		}
+		// 每发送完一轮就歇一下
+		//if rf.raftStatus == RaftCandidate && rf.CurrTerm == CurrTerm && !voteSucceed{
+		//	rf.mu.Unlock()
+		//	time.Sleep(time.Duration(10 * time.Millisecond))
+		//	rf.mu.Lock()
+		//}
 	}
 	// 如若投票成功
 	if voteSucceed {
@@ -250,11 +259,14 @@ func (rf *Raft) asLeader (CurrTerm uint32) {
 					// 趁着发送消息的间隙,解锁,看看这时候有没有事件发生
 					rf.mu.Unlock()
 					reply := HeartbeatReply{}
-					rf.sendHeartbeat(i, &args, &reply)
+					isCalled := rf.sendHeartbeat(i, &args, &reply)
 					rf.mu.Lock() // 发生状态转换但可能卡在这里...
 					// 看一下投票请求过程中是否有事件发生,如若状态发生改变,则退出。
 					if rf.raftStatus != RaftLeader || rf.CurrTerm != CurrTerm {
 						break
+					}
+					if !isCalled || reply.Replyer != i{
+						continue
 					}
 					if reply.CurrTerm > rf.CurrTerm{ // 如若对方任期比我方还大,则我方变为其追随者
 						rf.raftStatus = RaftFollower
@@ -270,9 +282,13 @@ func (rf *Raft) asLeader (CurrTerm uint32) {
 		}
 		// 根据定时器,来定时堵塞(也可以唤醒)。
 		if rf.raftStatus == RaftLeader && rf.CurrTerm == CurrTerm {
-			// rf.mu.Unlock()
-			time.Sleep(time.Duration(time.Millisecond))
-			// rf.mu.Lock() // 发生状态转换但可能卡在这里...
+			if time.Now().UnixNano() - lastTick > 4000000{
+				rf.mu.Unlock()
+				time.Sleep(time.Duration(4 * time.Millisecond))
+				rf.mu.Lock() // 发生状态转换但可能卡在这里...
+			}else {
+				time.Sleep(time.Duration(time.Millisecond))
+			}
 		}
 	}
 }
