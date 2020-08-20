@@ -8,7 +8,10 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
+import (
+	//"log"
+	"testing"
+)
 import "fmt"
 import "time"
 import "math/rand"
@@ -93,6 +96,61 @@ func TestReElection2A(t *testing.T) {
 
 	cfg.end()
 }
+
+func TestReElection102A(t *testing.T) {
+	servers := 10
+	cfg := make_config(t, servers, false)
+	defer cfg.cleanup()
+
+	cfg.begin("Test (2A): election after network failure")
+
+	leader1 := cfg.checkOneLeader()
+
+	// if the leader disconnects, a new one should be elected.
+	cfg.disconnect(leader1)
+	fmt.Printf("Test (2A): 断开第 %d 台服务器的网络连接\n",leader1)
+	cfg.checkOneLeader()
+
+	// if the old leader rejoins, that shouldn't
+	// disturb the new leader.
+	cfg.connect(leader1)
+	fmt.Printf("Test (2A): 连接第 %d 台服务器的网络连接\n",leader1)
+	leader2 := cfg.checkOneLeader()
+
+	// if there's no quorum, no leader should
+	// be elected.
+	var half int
+	if (servers & 1) != 0 { // 奇数个
+		half = servers / 2 + 1
+	}else { // 偶数个
+		half = servers / 2
+	}
+	for i := 0; i < half; i++{
+		cfg.disconnect((leader2 + i) % servers)
+		fmt.Printf("Test (2A): 断开第 %d 台服务器的网络连接\n",(leader2 + i) % servers)
+	}
+	time.Sleep(2 * RaftElectionTimeout)
+	cfg.checkNoLeader()
+
+	// if a quorum arises, it should elect a leader.
+	cfg.connect(leader2)
+	fmt.Printf("Test (2A): 连接第 %d 台服务器的网络连接\n",leader2)
+	//leader3 :=
+		cfg.checkOneLeader()
+
+	for i := 1; i < half; i++{
+		cfg.connect((leader2 + i) % servers)
+		fmt.Printf("Test (2A): 连接第 %d 台服务器的网络连接\n",(leader2 + i) % servers)
+		//temp :=
+			cfg.checkOneLeader()
+		//if temp != leader3 {
+		//	log.Fatal("已经有领导的情况下,连接之前断开的服务器,领导发生变更。期待是 : ", leader3, " 但结果是 : ", temp)
+		//}
+	}
+
+	cfg.end()
+}
+
 
 func TestBasicAgree2B(t *testing.T) {
 	servers := 5
