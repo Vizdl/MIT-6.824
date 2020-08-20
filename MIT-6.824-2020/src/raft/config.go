@@ -376,7 +376,7 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 		cfg.mu.Unlock()
 
 		if ok {
-			if count > 0 && cmd != cmd1 {
+			if count > 0 && cmd != cmd1 { // 认定的日志不一致
 				cfg.t.Fatalf("committed values do not match: index %v, %v, %v\n",
 					index, cmd, cmd1)
 			}
@@ -433,10 +433,10 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 func (cfg *config) one(cmd int, expectedServers int, retry bool) int {
 	t0 := time.Now()
 	starts := 0
-	for time.Since(t0).Seconds() < 10 {
+	for time.Since(t0).Seconds() < 10 { // 运行10s
 		// try all the servers, maybe one is the leader.
 		index := -1
-		for si := 0; si < cfg.n; si++ {
+		for si := 0; si < cfg.n; si++ { // 遍历n个raft
 			starts = (starts + 1) % cfg.n
 			var rf *Raft
 			cfg.mu.Lock()
@@ -445,7 +445,7 @@ func (cfg *config) one(cmd int, expectedServers int, retry bool) int {
 			}
 			cfg.mu.Unlock()
 			if rf != nil {
-				index1, _, ok := rf.Start(cmd)
+				index1, _, ok := rf.Start(cmd) // 提交一次日志
 				if ok {
 					index = index1
 					break
@@ -457,18 +457,18 @@ func (cfg *config) one(cmd int, expectedServers int, retry bool) int {
 			// somebody claimed to be the leader and to have
 			// submitted our command; wait a while for agreement.
 			t1 := time.Now()
-			for time.Since(t1).Seconds() < 2 {
-				nd, cmd1 := cfg.nCommitted(index)
+			for time.Since(t1).Seconds() < 2 { // 花费2s来判断是否正确。
+				nd, cmd1 := cfg.nCommitted(index) // 查看n个raft的提交状况
 				if nd > 0 && nd >= expectedServers {
 					// committed
-					if cmd2, ok := cmd1.(int); ok && cmd2 == cmd {
+					if cmd2, ok := cmd1.(int); ok && cmd2 == cmd { // 如若两次cmd相等
 						// and it was the command we submitted.
 						return index
 					}
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
-			if retry == false {
+			if retry == false { // 如若不重试
 				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 			}
 		} else {

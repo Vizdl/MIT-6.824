@@ -175,7 +175,7 @@ func TestFailNoAgree2B(t *testing.T) {
 
 	n, _ := cfg.nCommitted(index)
 	if n > 0 {
-		t.Fatalf("%v committed but no majority", n)
+		t.Fatalf("%v committed but no majority", n) // 在没有大多数持久化的情况下提交了
 	}
 
 	// repair
@@ -185,6 +185,7 @@ func TestFailNoAgree2B(t *testing.T) {
 
 	// the disconnected majority may have chosen a leader from
 	// among their own ranks, forgetting index 2.
+	// 脱离社会的多数人可能从自己的队伍中选择了一个领导人，忘记了index 2。
 	leader2 := cfg.checkOneLeader()
 	index2, _, ok2 := cfg.rafts[leader2].Start(30)
 	if ok2 == false {

@@ -86,7 +86,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			ofile.Close()
 			kva := mapf(taskMessage.File, string(content))
 			// 将kay-value分配到不同的数组中。
-			intermediates := [][]KeyValue{}
+			var intermediates [][]KeyValue
 			for i := 0; i < taskMessage.NReduce; i++{
 				intermediates = append(intermediates, []KeyValue{})
 			}

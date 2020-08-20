@@ -26,7 +26,7 @@
 
 关于raft的资料文档 :   
     
-    raft lab文档(**描述了如何启动与测试raft服务器以及每个阶段的任务与资料**) :
+    raft lab文档(描述了如何启动与测试raft服务器以及每个阶段的任务与资料) :
          http://nil.csail.mit.edu/6.824/2020/labs/lab-raft.html
 
 关于测试 :
