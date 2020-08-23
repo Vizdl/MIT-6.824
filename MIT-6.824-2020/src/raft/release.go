@@ -2,11 +2,6 @@
 
 package raft
 
-import (
-	// "fmt"
-)
-
-
 func (rf *Raft) voteTimeoutEventProcLog(){
 }
 
@@ -28,11 +23,17 @@ func (rf *Raft) killedLog() {
 }
 
 
-func (rf *Raft) RequestVoteLog(CurrTerm uint32,raftStatus ERaftStatus, args *RequestVoteArgs, reply *RequestVoteReply){
+func (rf *Raft) RequestVoteLog(CurrTerm int,raftStatus ERaftStatus, args *RequestVoteArgs, reply *RequestVoteReply){
 }
 
-func (rf *Raft) HeartbeatLog(CurrTerm uint32,raftStatus ERaftStatus, args *HeartbeatArgs, reply *HeartbeatReply){
+func (rf *Raft) HeartbeatLog(CurrTerm int,raftStatus ERaftStatus, args *HeartbeatArgs, reply *HeartbeatReply){
 }
 
 func (rf *Raft) voteSucceedLog(){
+}
+
+func (rf *Raft) StartLog(command interface{}, isSucceed bool){
+}
+
+func (rf *Raft) commitLog(applyMsg ApplyMsg){
 }

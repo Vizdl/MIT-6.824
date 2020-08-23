@@ -34,14 +34,22 @@ func (rf *Raft) killedLog() {
 }
 
 
-func (rf *Raft) RequestVoteLog(CurrTerm uint32,raftStatus ERaftStatus, args *RequestVoteArgs, reply *RequestVoteReply){
+func (rf *Raft) RequestVoteLog(CurrTerm int,raftStatus ERaftStatus, args *RequestVoteArgs, reply *RequestVoteReply){
 	fmt.Printf("第 %d 台服务器在第 %d 届以状态 %d 的形式收到第 %d 台服务器的投票请求 : %v, 答复为 : %v\n",rf.me,CurrTerm,raftStatus,args.Requester,args,reply)
 }
 
-func (rf *Raft) HeartbeatLog(CurrTerm uint32,raftStatus ERaftStatus, args *HeartbeatArgs, reply *HeartbeatReply){
+func (rf *Raft) HeartbeatLog(CurrTerm int,raftStatus ERaftStatus, args *HeartbeatArgs, reply *HeartbeatReply){
 	fmt.Printf("第 %d 台服务器在第 %d 届以状态 %d 的形式收到心跳包 : %v, 答复为 : %v\n",rf.me,CurrTerm,raftStatus,args,reply)
 }
 
 func (rf *Raft) voteSucceedLog(){
 	fmt.Println("第",rf.me,"台服务器获取大多数选票成为第",rf.currTerm,"届的领导者")
+}
+
+func (rf *Raft) StartLog(command interface{}, isSucceed bool){
+	fmt.Printf("第 %d 台服务器在第 %d 届以状态 %d 的形式收到日志提交 : %v, 答复为 : {%t,%d}\n",rf.me,rf.currTerm,rf.raftStatus,command,isSucceed,rf.lastLogIndex)
+}
+
+func (rf *Raft) commitLog(applyMsg ApplyMsg){
+	fmt.Printf("第 %d 台服务器在第 %d 届以状态 %d 的身份提交日志 : %v\n",rf.me,rf.currTerm,rf.raftStatus,applyMsg)
 }

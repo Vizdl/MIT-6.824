@@ -40,6 +40,17 @@
     已提交 : 表示有大多数追随者都已经添加成功(如何算添加成功？)
 
 
+    在什么情况下发送日志条目?
+        在上一次心跳发送返回是 true 并且当前还有日志条目未更新的时候。
+
+        成为领导第一步 : 将matchIndex都置为0,nextIndex都置为lastIndex + 1
+        发送 nextIndex[i] - 1 作为lastlogIndex
+        获取返回值,matchIndex(只有对上了返回true才有效,用来确认没对错),
+
+        如若返回结果为false,则nextIndex[i]--继续发送。
+        对了之后设置matchIndex
+
+
 策略 :
     接受命令的过程 :
         领导者接受客户端请求；

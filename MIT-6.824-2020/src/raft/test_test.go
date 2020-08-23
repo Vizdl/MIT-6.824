@@ -9,7 +9,6 @@ package raft
 //
 
 import (
-	//"log"
 	"testing"
 )
 import "fmt"
@@ -187,6 +186,7 @@ func TestFailAgree2B(t *testing.T) {
 	// follower network disconnection
 	leader := cfg.checkOneLeader()
 	cfg.disconnect((leader + 1) % servers)
+	fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",(leader + 1) % servers)
 
 	// agree despite one disconnected server?
 	cfg.one(102, servers-1, false)
@@ -197,6 +197,7 @@ func TestFailAgree2B(t *testing.T) {
 
 	// re-connect
 	cfg.connect((leader + 1) % servers)
+	fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",(leader + 1) % servers)
 
 	// agree with full set of servers?
 	cfg.one(106, servers, true)
@@ -371,6 +372,7 @@ func TestRejoin2B(t *testing.T) {
 	// leader network failure
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect(leader1)
+	fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",leader1)
 
 	// make old leader try to agree on some entries
 	cfg.rafts[leader1].Start(102)
@@ -383,14 +385,17 @@ func TestRejoin2B(t *testing.T) {
 	// new leader network failure
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect(leader2)
+	fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",leader2)
 
 	// old leader connected again
 	cfg.connect(leader1)
+	fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",leader1)
 
 	cfg.one(104, 2, true)
 
 	// all together now
 	cfg.connect(leader2)
+	fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",leader2)
 
 	cfg.one(105, servers, true)
 
@@ -409,8 +414,11 @@ func TestBackup2B(t *testing.T) {
 	// put leader and one follower in a partition
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect((leader1 + 2) % servers)
+	fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",(leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
+	fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",(leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
+	fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",(leader1 + 4) % servers)
 
 	// submit lots of commands that won't commit
 	for i := 0; i < 50; i++ {
@@ -420,12 +428,17 @@ func TestBackup2B(t *testing.T) {
 	time.Sleep(RaftElectionTimeout / 2)
 
 	cfg.disconnect((leader1 + 0) % servers)
+	fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",(leader1 + 0) % servers)
 	cfg.disconnect((leader1 + 1) % servers)
+	fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",(leader1 + 1) % servers)
 
 	// allow other partition to recover
 	cfg.connect((leader1 + 2) % servers)
+	fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",(leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
+	fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",(leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
+	fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",(leader1 + 4) % servers)
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
@@ -439,6 +452,7 @@ func TestBackup2B(t *testing.T) {
 		other = (leader2 + 1) % servers
 	}
 	cfg.disconnect(other)
+	fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",other)
 
 	// lots more commands that won't commit
 	for i := 0; i < 50; i++ {
@@ -450,10 +464,14 @@ func TestBackup2B(t *testing.T) {
 	// bring original leader back to life,
 	for i := 0; i < servers; i++ {
 		cfg.disconnect(i)
+		fmt.Printf("Test (2B)1: 断开第 %d 台服务器的网络连接\n",i)
 	}
 	cfg.connect((leader1 + 0) % servers)
+	fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",(leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
+	fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",(leader1 + 1) % servers)
 	cfg.connect(other)
+	fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",other)
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
@@ -463,6 +481,7 @@ func TestBackup2B(t *testing.T) {
 	// now everyone
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
+		fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",i)
 	}
 	cfg.one(rand.Int(), servers, true)
 
