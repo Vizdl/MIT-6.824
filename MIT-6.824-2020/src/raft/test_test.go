@@ -620,7 +620,7 @@ func TestPersist12C(t *testing.T) {
 
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect(leader1)
-	cfg.start1(leader1)
+	cfg.start1(leader1) // 杀死当前领导者
 	cfg.connect(leader1)
 
 	cfg.one(13, servers, true)
@@ -628,7 +628,7 @@ func TestPersist12C(t *testing.T) {
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect(leader2)
 	cfg.one(14, servers-1, true)
-	cfg.start1(leader2)
+	cfg.start1(leader2) // 杀死当前领导者
 	cfg.connect(leader2)
 
 	cfg.wait(4, servers, -1) // wait for leader2 to join before killing i3
@@ -636,7 +636,7 @@ func TestPersist12C(t *testing.T) {
 	i3 := (cfg.checkOneLeader() + 1) % servers
 	cfg.disconnect(i3)
 	cfg.one(15, servers-1, true)
-	cfg.start1(i3)
+	cfg.start1(i3) // 杀死追随者
 	cfg.connect(i3)
 
 	cfg.one(16, servers, true)
