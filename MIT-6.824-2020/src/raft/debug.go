@@ -15,7 +15,6 @@ func (rf *Raft) heartTimeoutEventProcLog() {
 	fmt.Println("第",rf.me,"台服务器在第 ",rf.currTerm," 届发生心跳超时")
 }
 
-
 func (rf *Raft) sendRequestVoteLog(i int, args *RequestVoteArgs, reply *RequestVoteReply) {
 	fmt.Printf("第 %d 台服务器在第 %d 届向第 %d 台服务器发起投票请求,请求前有 %d 票,收到回复为 : %v\n",rf.me,args.CurrTerm,i,rf.acquiredVote,reply)
 }
@@ -27,12 +26,6 @@ func (rf *Raft) sendHeartbeatLog(i int, args *HeartbeatArgs, reply *HeartbeatRep
 func (rf *Raft) killLog() {
 	fmt.Printf("第 %d 台服务器在第 %d 届以状态 %d 的形式被杀死\n",rf.me,rf.currTerm,rf.raftStatus)
 }
-
-
-func (rf *Raft) killedLog() {
-	fmt.Println("Killed")
-}
-
 
 func (rf *Raft) RequestVoteLog(CurrTerm int,raftStatus ERaftStatus, args *RequestVoteArgs, reply *RequestVoteReply){
 	fmt.Printf("第 %d 台服务器在第 %d 届以状态 %d 的形式收到第 %d 台服务器的投票请求 : %v, 答复为 : %v\n",rf.me,CurrTerm,raftStatus,args.Requester,args,reply)

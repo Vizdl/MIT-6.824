@@ -14,3 +14,5 @@ http://nil.csail.mit.edu/6.824/2020/schedule.html
 ---
 	1. mapreduce : https://github.com/Vizdl/MIT-6.824/tree/master/MIT-6.824-2020/src/mr
 	2. raft ： https://github.com/Vizdl/MIT-6.824/tree/master/MIT-6.824-2020/src/raft
+
+为了不影响正常的课程lab,这个项目只在公开课未开放的时候开源。感谢公开课的发起者与所有的师生仔细整理所有的资料与内容。

@@ -18,11 +18,6 @@ func (rf *Raft) sendHeartbeatLog(server int, args *HeartbeatArgs, reply *Heartbe
 func (rf *Raft) killLog() {
 }
 
-
-func (rf *Raft) killedLog() {
-}
-
-
 func (rf *Raft) RequestVoteLog(CurrTerm int,raftStatus ERaftStatus, args *RequestVoteArgs, reply *RequestVoteReply){
 }
 

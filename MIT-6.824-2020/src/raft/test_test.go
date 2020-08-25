@@ -464,7 +464,7 @@ func TestBackup2B(t *testing.T) {
 	// bring original leader back to life,
 	for i := 0; i < servers; i++ {
 		cfg.disconnect(i)
-		fmt.Printf("Test (2B)1: 断开第 %d 台服务器的网络连接\n",i)
+		fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",i)
 	}
 	cfg.connect((leader1 + 0) % servers)
 	fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",(leader1 + 0) % servers)
