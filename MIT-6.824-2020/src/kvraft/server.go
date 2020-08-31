@@ -27,10 +27,10 @@ type Op struct {
 
 type KVServer struct {
 	mu      sync.Mutex
-	me      int
-	rf      *raft.Raft
-	applyCh chan raft.ApplyMsg
-	dead    int32 // set by Kill()
+	me      int			// 当前服务器的序号
+	rf      *raft.Raft	// 这个k/v服务器的raft服务器。
+	applyCh chan raft.ApplyMsg // 接收数据的地方
+	dead    int32 		// set by Kill()
 
 	maxraftstate int // snapshot if log grows this big
 
@@ -81,6 +81,15 @@ func (kv *KVServer) killed() bool {
 // StartKVServer() must return quickly, so it should start goroutines
 // for any long-running work.
 //
+/*
+servers[] : 包含了将通过Raft合作形成容错密钥/值服务的服务器的集合的端口。
+me : 当前服务器在 servers[]中的角标.
+这个 k/v 服务器应该存储快照通过底层的raft来实现。
+应该调用 persister.SaveStateAndSnapshot() 去原子地保存这个raft服务器状态使用快照的方式。
+这个 k/v 服务器应该快照化当raft保存的状态超过了 maxraftstate 个字节,为了允许 raft 去自动回收 它的Log。
+如果 maxraftstate 是 -1,你不需要去快照化。
+StartKVServer() 必需要快速地返回, 所以它应该为了所有需要长时间运行的工作开启一个协程.
+*/
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
@@ -93,7 +102,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 
 	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh) // 创建raft服务器
 
 	// You may need initialization code here.
 

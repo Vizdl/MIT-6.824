@@ -42,6 +42,7 @@ func check(cfg *config, t *testing.T, ck *Clerk, key string, value string) {
 }
 
 // a client runs the function f and then signals it is done
+// 客户机运行函数f，然后发出完成的信号
 func run_client(t *testing.T, cfg *config, me int, ca chan bool, fn func(me int, ck *Clerk, t *testing.T)) {
 	ok := false
 	defer func() { ca <- ok }()
@@ -52,6 +53,7 @@ func run_client(t *testing.T, cfg *config, me int, ca chan bool, fn func(me int,
 }
 
 // spawn ncli clients and wait until they are all done
+// 衍生ncli客户端并等待，直到它们全部完成
 func spawn_clients_and_wait(t *testing.T, cfg *config, ncli int, fn func(me int, ck *Clerk, t *testing.T)) {
 	ca := make([]chan bool, ncli)
 	for cli := 0; cli < ncli; cli++ {
@@ -179,7 +181,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 
 	cfg.begin(title)
 
-	ck := cfg.makeClient(cfg.All())
+	ck := cfg.makeClient(cfg.All()) // 创建客户端
 
 	done_partitioner := int32(0)
 	done_clients := int32(0)
@@ -425,6 +427,10 @@ func GenericTestLinearizability(t *testing.T, part string, nclients int, nserver
 	}
 }
 
+
+/*
+测试一个客户端的情况
+*/
 func TestBasic3A(t *testing.T) {
 	// Test: one client (3A) ...
 	GenericTest(t, "3A", 1, false, false, false, -1)

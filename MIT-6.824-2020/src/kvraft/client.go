@@ -17,6 +17,10 @@ func nrand() int64 {
 	return x
 }
 
+
+/*
+客户端与服务器是多对多的关系,并不是一一对应。
+*/
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
