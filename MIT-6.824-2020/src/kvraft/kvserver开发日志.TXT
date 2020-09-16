@@ -1,6 +1,41 @@
+基本操作解释 :
+Put(key,value) : 替换数据库中特定键的值
+Append(key,arg) : 将arg附加到键的值
+Get(key) : 获取键的当前值,不存在的关键应该返回一个空字符串。
+
+Furthermore, a call must observe the effects of all calls that have completed before the call starts
+(so we are technically asking for linearizability).
+此外,一次调用必须观察所有在这次调用开始之前已经完成的调用产生的影响,所以我们技术上要求实现线性化。
+
+MIT LAB提示翻译 :
+After calling Start(), your kvservers will need to wait for Raft to complete agreement.
+在调用Start()函数后,你的 kv 服务器 将需要去等待 raft 达成一致
+Commands that have been agreed upon arrive on the applyCh
+已达成一致的命令到达 applyCh 管道
+Your code will need to keep reading applyCh while PutAppend() and Get() handlers submit commands to the Raft log using Start()
+当PutAppend()和Get()提交commands 到 raft log使用 Start() 函数时，您的代码需要保持读取applyCh。
+Beware of deadlock between the kvserver and its Raft library.
+小心kvserver和它的Raft library之间的死锁。
+You are allowed to add fields to the Raft ApplyMsg.
+你被允许去添加字段到这个 raft ApplyMsg。
+and to add fields to Raft RPCs such as AppendEntries.
+并且去添加字段到 raft rpcs 例如 AppendEntries。
+A kvserver should not complete a Get() RPC if it is not part of a majority (so that it does not serve stale data)
+如果kvserver不是大多数的一部分，那么它不应该完成Get() RPC(这样它就不会提供陈旧的数据)
+A simple solution is to enter every Get() (as well as each Put() and Append()) in the Raft log.
+一个简单的解决方案是将每个Get()(以及每个Put()和Append())输入到Raft日志中。
+You don't have to implement the optimization for read-only operations that is described in Section 8.
+您不必为第8节中描述的只读操作实现优化。
+It's best to add locking from the start because the need to avoid deadlocks sometimes affects overall code design.
+最好从一开始就添加锁，因为避免死锁的需要有时会影响整个代码设计。
+Check that your code is race-free using go test -race.
+使用go test -race检查代码是否race-free。
+
+
 随机选择服务器,如若第一选择不是领导者,服务器将拒绝客户端请求,并提供它认定的领导者。
 如何判断是否日志提交成功(幂等性)?
-    客户端为每个指令分配唯一的序列号,然后,状态机跟踪每个客户端处理的最新序列号相关响应。
+    客户端为每个指令分配唯一的序列号 : 可以是服务器编号 + 一个当前服务器提交的值,这样可以保证唯一性。
+    然后,状态机跟踪每个客户端处理的最新序列号相关响应。
     如果他收到一个序列号以及被执行的命令,它会立即响应而不重新执行请求。
 
 需要确定领导者真的是领导者...
@@ -10,6 +45,11 @@
     leader需要自己知道哪些log entry是已经提交的,
     在正常情况下，leader一直是有已提交过的log entry的,
     但是,在leader刚当选的时候,需要当场获取,可以通过提交一个空的log entry来获取已提交过的log entry
-    （备注 : 个人理解是为了避免commiting from previous leader那种情况）
+    （备注 : 个人理解是为了避免 commiting from previous leader 那种情况）
     leader在执行只读请求时，需要确定自己是否还是leader,
     通过和大多数的server发送heartbeat消息，来确定自己是leader，然后再决定是否执行该请求。
+
+
+客户端 读写 请求:
+ 读 : 必须保障读的服务器拥有最新日志,这个服务器必须要领导者来认可。
+ 写 : 写完才返回。

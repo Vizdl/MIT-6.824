@@ -33,8 +33,6 @@ import (
 )
 import "labrpc"
 
-// import "bytes"
-// import "labgob"
 
 type ERaftStatus int32
 const (
@@ -95,8 +93,7 @@ type Raft struct {
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill() 服务器是否死亡...4字节简单数据,赋值不需要加锁
 	cond	  *sync.Cond	      // 用来控制raft主动行为的条件变量
-	// Your data here (2A, 2B, 2C).
-	// Look at the paper's Figure 2 for a description of what
+
 	// state a Raft server must maintain.
 
 	raftStatus ERaftStatus

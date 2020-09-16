@@ -814,7 +814,9 @@ func TestUnreliableAgree2C(t *testing.T) {
 
 	cfg.end()
 }
-
+/*
+网络不可靠测试
+*/
 func TestFigure8Unreliable2C(t *testing.T) {
 	servers := 5
 	cfg := make_config(t, servers, true)
@@ -826,17 +828,17 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
-		if iters == 200 {
-			cfg.setlongreordering(true)
+		if iters == 200 { // 当迭代200次后。。
+			cfg.setlongreordering(true) // 这句话有什么用?
 		}
 		leader := -1
-		for i := 0; i < servers; i++ {
+		for i := 0; i < servers; i++ { // 遍历所有服务器,找到领导。
 			_, _, ok := cfg.rafts[i].Start(rand.Int() % 10000)
-			if ok && cfg.connected[i] {
+			if ok && cfg.connected[i] { // 如若是领导并且网络无故障。
 				leader = i
 			}
 		}
-
+		// 根据不同概率进行不同时间的睡眠
 		if (rand.Int() % 1000) < 100 {
 			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
@@ -844,24 +846,27 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			ms := (rand.Int63() % 13)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
-
+		// 如若有领导,且命中概率,则断开领导的连接。
 		if leader != -1 && (rand.Int()%1000) < int(RaftElectionTimeout/time.Millisecond)/2 {
 			cfg.disconnect(leader)
+			fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",leader)
 			nup -= 1
 		}
-
+		// 如若连接数量小于3,则一定概率唤醒一台断开的服务器。
 		if nup < 3 {
 			s := rand.Int() % servers
 			if cfg.connected[s] == false {
 				cfg.connect(s)
+				fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",s)
 				nup += 1
 			}
 		}
 	}
-
+	// 连接所有服务器。
 	for i := 0; i < servers; i++ {
 		if cfg.connected[i] == false {
 			cfg.connect(i)
+			fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",i)
 		}
 	}
 

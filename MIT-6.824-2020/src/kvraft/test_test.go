@@ -150,6 +150,14 @@ func partitioner(t *testing.T, cfg *config, ch chan bool, done *int32) {
 // the test repartitions the network concurrently with the clients and servers. If
 // maxraftstate is a positive number, the size of the state for Raft (i.e., log
 // size) shouldn't exceed 2*maxraftstate.
+/*
+基本测试如下: 一个或多个客户端在一段时间周期内提交Append/Get设置服务器的操作。
+在这个周期之后,测试检查是否存在所有附加的值，并检查是否符合key的顺序。
+如果设置了不可靠，rpc可能会失败。
+如果设置了崩溃，则在周期结束并重新启动后，服务器会崩溃。
+如果设置了分区，测试与客户端和服务器同时对网络进行重新分区。
+如果maxraftstate是一个正数，是筏(即log)状态的大小大小)不应该超过2*maxraftstate。
+*/
 func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash bool, partitions bool, maxraftstate int) {
 
 	title := "Test: "

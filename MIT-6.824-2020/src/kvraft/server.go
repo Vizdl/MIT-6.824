@@ -24,7 +24,10 @@ type Op struct {
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 }
-
+/*
+KVServer : 将数据传达到 raft协议层,如若返回到applyCh则表明提交成功。
+如若返回到下一个序号的数据都没有返回,则表示提交失败。
+*/
 type KVServer struct {
 	mu      sync.Mutex
 	me      int			// 当前服务器的序号
