@@ -16,9 +16,9 @@ https://github.com/Vizdl/MIT-6.824/tree/master/MIT-6.824-2020/src/mrapps
 写完mapreduce函数后,先进入 src/main/文件夹
 cd src/main
 构建 wc.go
-go build -buildmode = plugin ../mrapps/wc.go
+go build -buildmode=plugin ../mrapps/wc.go
 删除以往main文件夹下输出
-rm mr-out *
+rm mr-out*
 在linux使用该指令运行 master(依然在main文件夹下)
 go run mrmaster.go pg-*.txt
 运行单个worker(使用几次指令,运行几个worker)
