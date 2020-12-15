@@ -195,7 +195,7 @@ func (rf *Raft) heartTimeoutEventProc() {
 	rf.toBeCandidate()
 }
 
-func (rf *Raft) toSendRequestVote(CurrTerm int, i int){
+func (rf *Raft) toSendRequestVote(CurrTerm int, raftId int){
 	args := RequestVoteArgs{
 		Requester : rf.me,
 		CurrTerm : CurrTerm,
@@ -206,12 +206,12 @@ func (rf *Raft) toSendRequestVote(CurrTerm int, i int){
 	voteSucceed := false
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	for rf.raftStatus == RaftCandidate && rf.currTerm == CurrTerm && !rf.hasVoteResult[i] {
+	for rf.raftStatus == RaftCandidate && rf.currTerm == CurrTerm && !rf.hasVoteResult[raftId] {
 		// 趁着发送消息的间隙,解锁,看看这时候有没有事件发生
 		//t1 :=time.Now().UnixNano()
 		rf.mu.Unlock()
 		reply := RequestVoteReply{}
-		isCalled := rf.sendRequestVote(i, &args, &reply)
+		isCalled := rf.sendRequestVote(raftId, &args, &reply)
 		//t2 :=time.Now().UnixNano()
 		rf.mu.Lock()
 		//t3 := time.Now().UnixNano()
@@ -220,7 +220,7 @@ func (rf *Raft) toSendRequestVote(CurrTerm int, i int){
 		if rf.raftStatus != RaftCandidate || rf.currTerm != CurrTerm {
 			break
 		}
-		if !isCalled || reply.Replyer != i{ // 调用失败
+		if !isCalled || reply.Replyer != raftId{ // 调用失败
 			continue
 		}
 
@@ -228,7 +228,7 @@ func (rf *Raft) toSendRequestVote(CurrTerm int, i int){
 			log.Fatal("第",rf.me,"台服务器处于候选者状态但是rf.voteTimer == nil")
 		}
 
-		rf.hasVoteResult[i] = true
+		rf.hasVoteResult[raftId] = true
 		if !reply.ReplyStatus && reply.CurrTerm > rf.currTerm{
 			if rf.voteTimer.Stop() { // 如若关闭成功,则直接变成下一届的追随者,如若失败,等待超时事件发生
 				rf.toBeFollower(reply.CurrTerm, NOVOTEFOR, NOLEADER)
@@ -259,7 +259,7 @@ func (rf *Raft) toSendRequestVote(CurrTerm int, i int){
 	}
 }
 
-func (rf *Raft) toSendHeartbeat(CurrTerm int, i int){
+func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 	lastTick := time.Now().UnixNano() - HEARTBEATTIMEOUT // 确保刚进入就一定能发出心跳
 	isMatch := false
 	rf.mu.Lock()
@@ -271,20 +271,20 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, i int){
 			args := HeartbeatArgs{
 				Sender: rf.me,
 				CurrTerm: CurrTerm,
-				PrevIndex: rf.nextIndex[i] - 1,
-				PrevTerm: rf.logBuff[rf.nextIndex[i] - 1].Term,
+				PrevIndex: rf.nextIndex[raftId] - 1,
+				PrevTerm: rf.logBuff[rf.nextIndex[raftId] - 1].Term,
 				HaveEnt: false,
 				CommitIndex: rf.commitIndex,
 			}
-			if rf.nextIndex[i] <= rf.lastLogIndex && isMatch{
+			if rf.nextIndex[raftId] <= rf.lastLogIndex && isMatch{
 				args.HaveEnt = true
-				args.Entries = rf.logBuff[rf.nextIndex[i]]
+				args.Entries = rf.logBuff[rf.nextIndex[raftId]]
 			}
 			// 趁着发送消息的间隙,解锁,看看这时候有没有事件发生
 			//t1 :=time.Now().UnixNano()
 			rf.mu.Unlock()
 			reply := HeartbeatReply{}
-			isCalled := rf.sendHeartbeat(i, &args, &reply)
+			isCalled := rf.sendHeartbeat(raftId, &args, &reply)
 			//t2 :=time.Now().UnixNano()
 			rf.mu.Lock() // 发生状态转换但可能卡在这里...
 			//t3 :=time.Now().UnixNano()
@@ -293,7 +293,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, i int){
 			if rf.raftStatus != RaftLeader || rf.currTerm != CurrTerm {
 				break
 			}
-			if !isCalled || reply.Replyer != i{
+			if !isCalled || reply.Replyer != raftId{
 				continue
 			}
 			if reply.CurrTerm > rf.currTerm{ // 如若对方任期比我方还大,则我方变为追随者
@@ -303,15 +303,15 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, i int){
 			// 如若匹配失败
 			if !reply.ReplyStatus {
 				isMatch = false
-				rf.nextIndex[i]--
+				rf.nextIndex[raftId]--
 			}else {
 				isMatch = true
 				if args.HaveEnt {
 					if args.Entries.Term == rf.currTerm {
-						rf.logPersistRecord[rf.nextIndex[i]]++
-						if rf.logPersistRecord[rf.nextIndex[i]] >= len(rf.peers) / 2 + 1{
-							if rf.commitIndex < rf.nextIndex[i]{
-								rf.commitIndex = rf.nextIndex[i]
+						rf.logPersistRecord[rf.nextIndex[raftId]]++
+						if rf.logPersistRecord[rf.nextIndex[raftId]] >= len(rf.peers) / 2 + 1{
+							if rf.commitIndex < rf.nextIndex[raftId]{
+								rf.commitIndex = rf.nextIndex[raftId]
 							}
 						}
 					}
@@ -330,7 +330,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, i int){
 					if flag{
 						rf.persist()
 					}
-					rf.nextIndex[i]++
+					rf.nextIndex[raftId]++
 				}else {
 					for i := 1; i <= args.PrevIndex; i++{
 						rf.logPersistRecord[i]++

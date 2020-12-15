@@ -786,29 +786,32 @@ func TestFigure82C(t *testing.T) {
 	cfg.end()
 }
 
+/*
+未通过测试
+*/
 func TestUnreliableAgree2C(t *testing.T) {
 	servers := 5
-	cfg := make_config(t, servers, true)
+	cfg := make_config(t, servers, true) // 最后一个属性是什么意思,是网络不可靠吗?
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2C): unreliable agreement")
 
 	var wg sync.WaitGroup
-
+	// 提交顺序 100
 	for iters := 1; iters < 50; iters++ {
 		for j := 0; j < 4; j++ {
 			wg.Add(1)
 			go func(iters, j int) {
 				defer wg.Done()
-				cfg.one((100*iters)+j, 1, true)
+				cfg.one((100*iters)+j, 1, true) // 可以重试的提交,且是无效提交。
 			}(iters, j)
 		}
-		cfg.one(iters, 1, true)
+		cfg.one(iters, 1, true) 
 	}
 
 	cfg.setunreliable(false)
 
-	wg.Wait()
+	wg.Wait() // 计数器为0停止等待。
 
 	cfg.one(100, servers, true)
 

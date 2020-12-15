@@ -430,6 +430,23 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 // times, in case a leader fails just after Start().
 // if retry==false, calls Start() only once, in order
 // to simplify the early Lab 2B tests.
+// 做一份完整的协议。
+// 它可能一开始选错了领导人，
+// 而不得不在放弃后重新提交。
+// 大约10秒后完全放弃。
+// 间接检查服务器是否同意
+// 相同的值，因为nCommitted()检查这个，
+// 从applyCh读取的线程也是如此。
+// 返回索引。
+// 如果重试==true，可以多次提交命令
+// 次数，以防领导在开始后失败()。
+// 如果retry==false，则只按顺序调用Start()一次
+// 简化早期的实验室2B测试。
+
+
+/*
+测试一次提交的结果是否正确。
+*/
 func (cfg *config) one(cmd int, expectedServers int, retry bool) int {
 	t0 := time.Now()
 	starts := 0
@@ -437,29 +454,31 @@ func (cfg *config) one(cmd int, expectedServers int, retry bool) int {
 		// try all the servers, maybe one is the leader.
 		index := -1
 		for si := 0; si < cfg.n; si++ { // 遍历n个raft
-			starts = (starts + 1) % cfg.n
+			starts = (starts + 1) % cfg.n // 轮转地选择上一次的下一个raft
 			var rf *Raft
 			cfg.mu.Lock()
-			if cfg.connected[starts] {
-				rf = cfg.rafts[starts]
+			if cfg.connected[starts] { // 如若当前raft链接在网络中
+				rf = cfg.rafts[starts] // 则选中它
 			}
 			cfg.mu.Unlock()
-			if rf != nil {
-				index1, _, ok := rf.Start(cmd) // 提交一次日志
-				if ok {
-					index = index1
+			if rf != nil { // 如若 starts 下标对应的 raft 在网络中。
+				index1, _, ok := rf.Start(cmd) // 则向它提交一次日志
+				if ok { // 如若提交成功。
+					index = index1 // 则更替下标
 					break
 				}
 			}
 		}
 
-		if index != -1 {
+		if index != -1 { // 如若提交成功过
 			// somebody claimed to be the leader and to have
 			// submitted our command; wait a while for agreement.
+			// 有人声称自己是首领
+			// 提交我们的命令;等一会儿再达成一致。
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 { // 花费2s来判断是否正确。
 				nd, cmd1 := cfg.nCommitted(index) // 查看n个raft的提交状况
-				if nd > 0 && nd >= expectedServers {
+				if nd > 0 && nd >= expectedServers { // 如若有人提交了,并且提交的次数大于期待的服务器数
 					// committed
 					if cmd2, ok := cmd1.(int); ok && cmd2 == cmd { // 如若两次cmd相等
 						// and it was the command we submitted.
@@ -468,7 +487,7 @@ func (cfg *config) one(cmd int, expectedServers int, retry bool) int {
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
-			if retry == false { // 如若不重试
+			if retry == false { // 两秒内都没有达成提交 如若不重试
 				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 			}
 		} else {
