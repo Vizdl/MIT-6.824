@@ -273,11 +273,10 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 				CurrTerm: CurrTerm,
 				PrevIndex: rf.nextIndex[raftId] - 1,
 				PrevTerm: rf.logBuff[rf.nextIndex[raftId] - 1].Term,
-				HaveEnt: false,
+				HaveEnt: rf.nextIndex[raftId] <= rf.lastLogIndex && isMatch,
 				CommitIndex: rf.commitIndex,
 			}
-			if rf.nextIndex[raftId] <= rf.lastLogIndex && isMatch{
-				args.HaveEnt = true
+			if args.HaveEnt {
 				args.Entries = rf.logBuff[rf.nextIndex[raftId]]
 			}
 			// 趁着发送消息的间隙,解锁,看看这时候有没有事件发生
