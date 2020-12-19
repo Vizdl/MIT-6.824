@@ -106,13 +106,13 @@ type Raft struct {
 	lastApplied int 				/* 表示当前节点最后一条被应用到状态机的日志索引 */
 	logBuff []LogEntries			/* 日志缓存,内含日志条目与日志产生的任期 */
 
-	currLeader int					/* 作为追随者有效 : 当前届领导者 */
-	heartbeatTimer *time.Timer 		/* 作为追随者有效 : 心跳定时器 */
-	acquiredVote uint				/* 作为候选者有效 : 在当前选举周期获得的票数 */
-	hasVoteResult []bool			/* 作为候选者有效 : 对方在当前轮是否给我投过票,即使对方投的是反对票,这里也会变为true */
-	voteTimer *time.Timer 			/* 作为候选者有效 : 选举定时器 */
-	nextIndex []int					/* 作为领导者有效 : 其他raft下一条日志的索引的猜测值,用以同步日志。 */
-	logPersistRecord []int			/* 作为领导者有效 : 日志持久化数量,领导者用来统计当前任期内日志是否应该被提交 */
+	currLeader int					/* 作为追随者有效, 当前届领导者 */
+	heartbeatTimer *time.Timer 		/* 作为追随者有效, 心跳定时器 */
+	acquiredVote uint				/* 作为候选者有效, 在当前选举周期获得的票数 */
+	hasVoteResult []bool			/* 作为候选者有效, 对方在当前轮是否给我投过票,即使对方投的是反对票,这里也会变为true */
+	voteTimer *time.Timer 			/* 作为候选者有效, 选举定时器 */
+	nextIndex []int					/* 作为领导者有效, nextIndex[i] : ID 为 i 的 raft 下一条日志的索引的猜测值,用以同步日志。 */
+	logPersistRecord []int			/* 作为领导者有效, logPersistRecord[i] : 第 i 条日志条目被 logPersistRecord[i] 台 raft 持久化,领导者用来统计当前任期内日志是否应该被提交 */
 }
 
 /*
