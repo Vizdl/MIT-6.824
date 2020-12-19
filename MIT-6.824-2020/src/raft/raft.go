@@ -353,14 +353,13 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatReply) {
 	reply.Replyer = rf.me
 	reply.CurrTerm = rf.currTerm
+	reply.ReplyStatus = false
 	if args.CurrTerm < rf.currTerm {
-		reply.ReplyStatus = false
 		return
 	}
 	// 如若之前心跳计时器开着,则先关闭
 	if rf.heartbeatTimer != nil && !rf.heartbeatTimer.Stop(){
 		fmt.Println("第 ",rf.me," 台服务器作为追随者关闭定时器异常,表示心跳超时已经发生了")
-		reply.ReplyStatus = false
 		return
 	}
 	// 判断异常
@@ -420,8 +419,8 @@ func (rf *Raft) asCandidateProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatR
 		return
 	}
 	reply.ReplyStatus = args.PrevIndex == rf.lastLogIndex && args.PrevTerm ==  rf.lastLogTerm
-	if reply.ReplyStatus && args.HaveEnt { // 如若没问题,并且携带日志条目。
-		rf.logBuff = append(rf.logBuff, args.Entries)
+	if args.HaveEnt {
+		log.Fatal("第一次心跳就发送了日志,不正常的状态。")
 	}
 	rf.toBeFollower(args.CurrTerm, args.Sender, args.Sender)
 }
@@ -437,8 +436,8 @@ func (rf *Raft) asLeaderProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRepl
 		log.Fatal("第",rf.me,"台服务器在第",rf.currTerm,"领导应该是自己却收到",args.Sender,"发送的心跳包")
 	}
 	reply.ReplyStatus = args.PrevIndex == rf.lastLogIndex && args.PrevTerm ==  rf.lastLogTerm
-	if reply.ReplyStatus && args.HaveEnt { // 如若没问题,并且携带日志条目。
-		rf.logBuff = append(rf.logBuff, args.Entries)
+	if args.HaveEnt {
+		log.Fatal("第一次心跳就发送了日志,不正常的状态。")
 	}
 	rf.toBeFollower(args.CurrTerm, args.Sender, args.Sender)
 }
