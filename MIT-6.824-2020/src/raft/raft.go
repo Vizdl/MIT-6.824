@@ -302,7 +302,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 			// 如若匹配失败
 			if !reply.ReplyStatus {
 				isMatch = false
-				rf.nextIndex[raftId]--
+				rf.nextIndex[raftId] = reply.LastIndex
 			}else {
 				isMatch = true
 				if args.HaveEnt {
@@ -366,6 +366,7 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 	if rf.currLeader != NOLEADER && args.CurrTerm == rf.currTerm && args.Sender != rf.currLeader{
 		log.Fatal("第 ",rf.me," 台服务器在第 ",rf.currTerm," 届收到心跳包,但领导应该是 ",rf.currLeader," 却收到 ",args.Sender," 发送的心跳包")
 	}
+	//reply.ReplyStatus = args.PrevIndex == rf.lastLogIndex && args.PrevTerm ==  rf.lastLogTerm
 	reply.ReplyStatus = args.PrevIndex <= rf.lastLogIndex && args.PrevTerm ==  rf.logBuff[args.PrevIndex].Term
 	if reply.ReplyStatus {
 		if args.CommitIndex > rf.commitIndex{
@@ -375,6 +376,12 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 			rf.logBuff = rf.logBuff[:args.PrevIndex + 1]
 			rf.lastLogIndex = args.PrevIndex
 			rf.lastLogTerm = rf.logBuff[rf.lastLogIndex].Term
+		}
+	}else {
+		if args.PrevIndex > rf.lastLogIndex{
+			reply.LastIndex = rf.lastLogIndex
+		}else {
+			reply.LastIndex = args.PrevIndex - 1
 		}
 	}
 	// 虽然有可能已经提交了,但是我这里还没有。
@@ -419,6 +426,13 @@ func (rf *Raft) asCandidateProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatR
 		return
 	}
 	reply.ReplyStatus = args.PrevIndex == rf.lastLogIndex && args.PrevTerm ==  rf.lastLogTerm
+	if !reply.ReplyStatus {
+		if args.PrevIndex > rf.lastLogIndex {
+			reply.LastIndex = rf.lastLogIndex
+		}else {
+			reply.LastIndex = args.PrevIndex - 1
+		}
+	}
 	if args.HaveEnt {
 		log.Fatal("第一次心跳就发送了日志,不正常的状态。")
 	}
@@ -436,6 +450,13 @@ func (rf *Raft) asLeaderProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRepl
 		log.Fatal("第",rf.me,"台服务器在第",rf.currTerm,"领导应该是自己却收到",args.Sender,"发送的心跳包")
 	}
 	reply.ReplyStatus = args.PrevIndex == rf.lastLogIndex && args.PrevTerm ==  rf.lastLogTerm
+	if !reply.ReplyStatus {
+		if args.PrevIndex > rf.lastLogIndex {
+			reply.LastIndex = rf.lastLogIndex
+		}else {
+			reply.LastIndex = args.PrevIndex - 1
+		}
+	}
 	if args.HaveEnt {
 		log.Fatal("第一次心跳就发送了日志,不正常的状态。")
 	}
@@ -588,7 +609,7 @@ type HeartbeatReply struct{
 	ReplyStatus bool 	// 答复状态
 	Replyer 	int		// 答复者
 	CurrTerm 	int 	// 答复者的当前任期
-	//MatchIndex 	int		// 当前匹配的索引
+	LastIndex 	int		// 当前匹配的索引
 }
 //
 // example RequestVote RPC arguments structure.
