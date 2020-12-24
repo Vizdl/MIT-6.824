@@ -20,7 +20,7 @@ func (rf *Raft) sendRequestVoteLog(i int, args *RequestVoteArgs, reply *RequestV
 }
 
 func (rf *Raft) sendHeartbeatLog(i int, args *HeartbeatArgs, reply *HeartbeatReply){
-	fmt.Printf("第 %d 台服务器作为领导者在第 %d 届向第 %d 台服务器发送心跳包,收到回复为 : %v\n",rf.me,args.CurrTerm,i,reply)
+	fmt.Printf("第 %d 台服务器作为领导者在第 %d 届向第 %d 台服务器发送心跳包\n %+v\n, 收到回复为 :\n %+v\n, raft :\n %+v\n",rf.me,args.CurrTerm,i,args,reply,rf)
 }
 
 func (rf *Raft) killLog() {
@@ -32,7 +32,7 @@ func (rf *Raft) RequestVoteLog(CurrTerm int,raftStatus ERaftStatus, args *Reques
 }
 
 func (rf *Raft) HeartbeatLog(CurrTerm int,raftStatus ERaftStatus, args *HeartbeatArgs, reply *HeartbeatReply){
-	fmt.Printf("第 %d 台服务器在第 %d 届以状态 %d 的形式收到心跳包 : %v, 答复为 : %v\n",rf.me,CurrTerm,raftStatus,args,reply)
+	fmt.Printf("第 %d 台服务器在第 %d 届以状态 %d 的形式收到心跳包 :\n %+v\n, 答复为 :\n %+v\n, raft :\n %+v\n",rf.me,CurrTerm,raftStatus,args,reply,rf)
 }
 
 func (rf *Raft) voteSucceedLog(){

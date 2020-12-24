@@ -302,7 +302,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 			// 如若匹配失败
 			if !reply.ReplyStatus {
 				isMatch = false
-				rf.nextIndex[raftId] = reply.LastIndex
+				rf.nextIndex[raftId] = reply.LastIndex + 1
 			}else {
 				isMatch = true
 				if args.HaveEnt {
@@ -366,11 +366,16 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 	if rf.currLeader != NOLEADER && args.CurrTerm == rf.currTerm && args.Sender != rf.currLeader{
 		log.Fatal("第 ",rf.me," 台服务器在第 ",rf.currTerm," 届收到心跳包,但领导应该是 ",rf.currLeader," 却收到 ",args.Sender," 发送的心跳包")
 	}
-	//reply.ReplyStatus = args.PrevIndex == rf.lastLogIndex && args.PrevTerm ==  rf.lastLogTerm
+	/* args.PrevIndex <= rf.lastLogIndex 是考虑到 对方比我方日志更少 */
 	reply.ReplyStatus = args.PrevIndex <= rf.lastLogIndex && args.PrevTerm ==  rf.logBuff[args.PrevIndex].Term
 	if reply.ReplyStatus {
 		if args.CommitIndex > rf.commitIndex{
-			rf.commitIndex = args.CommitIndex
+			/* 需要考虑我方总日志数量少于提交数量的情况 */
+			if args.CommitIndex <= rf.lastLogIndex {
+				rf.commitIndex = args.CommitIndex
+			}else {
+				rf.commitIndex = rf.lastLogIndex
+			}
 		}
 		if args.PrevIndex < rf.lastLogIndex {
 			rf.logBuff = rf.logBuff[:args.PrevIndex + 1]
@@ -384,8 +389,8 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 			reply.LastIndex = args.PrevIndex - 1
 		}
 	}
-	// 虽然有可能已经提交了,但是我这里还没有。
 	flag := false
+	/* 向k/v服务器发送已提交的消息 */
 	for i := rf.lastApplied + 1; i <= rf.commitIndex && i < len(rf.logBuff); i++{
 		applyMsg := ApplyMsg {
 			CommandValid : true,
@@ -397,10 +402,12 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 		rf.commitLog(applyMsg)
 		flag = true
 	}
+	/* 发生变动了,持久化 */
 	if flag {
 		rf.persist()
 	}
-	if reply.ReplyStatus && args.HaveEnt { // 如若没问题,并且携带日志条目。
+	/* 如若匹配成功,并且携带日志条目。 */
+	if reply.ReplyStatus && args.HaveEnt {
 		rf.logBuff = append(rf.logBuff, args.Entries)
 		rf.lastLogIndex++
 		rf.lastLogTerm = args.Entries.Term
