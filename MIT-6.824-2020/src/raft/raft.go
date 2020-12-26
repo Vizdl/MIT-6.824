@@ -49,6 +49,7 @@ const HEARTBEATTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
 const MINVOTETIMEOUT int64 = 150000000
 const VOTETIMEOUTTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
 const HEARTBEATTIMEOUT int64 = 50000000
+const ONEMAXLOGCOUNT int = 1 /* 一次性提交的日志大于1存在安全隐患? */
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -281,7 +282,11 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 				CommitIndex: rf.commitIndex,
 			}
 			if rf.nextIndex[raftId] <= rf.lastLogIndex && isMatch {
-				args.Entries = rf.logBuff[rf.nextIndex[raftId]:]
+				end := len(rf.logBuff)
+				if len(rf.logBuff) >= rf.nextIndex[raftId] + ONEMAXLOGCOUNT {
+					end = rf.nextIndex[raftId] + ONEMAXLOGCOUNT
+				}
+				args.Entries = rf.logBuff[rf.nextIndex[raftId]:end]
 			}
 			/* 趁着发送消息的间隙,解锁,看看这时候有没有事件发生 */
 			rf.mu.Unlock()
