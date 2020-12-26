@@ -852,7 +852,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		// 如若有领导,且命中概率,则断开领导的连接。
 		if leader != -1 && (rand.Int()%1000) < int(RaftElectionTimeout/time.Millisecond)/2 {
 			cfg.disconnect(leader)
-			fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",leader)
+			//fmt.Printf("Test (2B): 断开第 %d 台服务器的网络连接\n",leader)
 			nup -= 1
 		}
 		// 如若连接数量小于3,则一定概率唤醒一台断开的服务器。
@@ -860,7 +860,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			s := rand.Int() % servers
 			if cfg.connected[s] == false {
 				cfg.connect(s)
-				fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",s)
+				//fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",s)
 				nup += 1
 			}
 		}
@@ -869,7 +869,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		if cfg.connected[i] == false {
 			cfg.connect(i)
-			fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",i)
+			//fmt.Printf("Test (2B): 连接第 %d 台服务器的网络连接\n",i)
 		}
 	}
 
