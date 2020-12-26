@@ -4,3 +4,4 @@ mr-out-0
 /data
 /.idea
 /workspace.code-workspace
+*.bak
