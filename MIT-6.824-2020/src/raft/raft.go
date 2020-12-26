@@ -265,6 +265,7 @@ func (rf *Raft) toSendRequestVote(CurrTerm int, raftId int){
 func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 	/* 确保刚进入就一定能发出心跳 */
 	lastTick := time.Now().UnixNano() - HEARTBEATTIMEOUT
+	/* 按照逻辑匹配成功后就不会失败 */
 	isMatch := false
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -277,11 +278,10 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 				CurrTerm: CurrTerm,
 				PrevIndex: rf.nextIndex[raftId] - 1,
 				PrevTerm: rf.logBuff[rf.nextIndex[raftId] - 1].Term,
-				HaveEnt: rf.nextIndex[raftId] <= rf.lastLogIndex && isMatch,
 				CommitIndex: rf.commitIndex,
 			}
-			if args.HaveEnt {
-				args.Entries = rf.logBuff[rf.nextIndex[raftId]]
+			if rf.nextIndex[raftId] <= rf.lastLogIndex && isMatch {
+				args.Entries = rf.logBuff[rf.nextIndex[raftId]:]
 			}
 			/* 趁着发送消息的间隙,解锁,看看这时候有没有事件发生 */
 			rf.mu.Unlock()
@@ -311,16 +311,21 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 				rf.nextIndex[raftId] = reply.LastIndex + 1
 			}else {
 				isMatch = true
-				if args.HaveEnt {
-					if args.Entries.Term == rf.currTerm {
-						rf.logPersistRecord[rf.nextIndex[raftId]]++
-						if rf.logPersistRecord[rf.nextIndex[raftId]] >= len(rf.peers) / 2 + 1{
-							if rf.commitIndex < rf.nextIndex[raftId]{
-								rf.commitIndex = rf.nextIndex[raftId]
+				/* 如若发送了日志 */
+				if len(args.Entries) > 0 {
+					/* 更新 logPersistRecord 和 commitIndex */
+					for i := 0; i < len(args.Entries); i++ {
+						if args.Entries[i].Term == rf.currTerm {
+							rf.logPersistRecord[rf.nextIndex[raftId] + i]++
+							if rf.logPersistRecord[rf.nextIndex[raftId] + i] >= len(rf.peers) / 2 + 1{
+								if rf.commitIndex < rf.nextIndex[raftId] + i{
+									rf.commitIndex = rf.nextIndex[raftId]
+								}
 							}
 						}
 					}
 					flag := false
+					/* 将已提交但未应用的日志应用到 k/v 服务器 */
 					for i := rf.lastApplied + 1; i <= rf.commitIndex; i++{
 						applyMsg := ApplyMsg {
 							CommandValid : true,
@@ -335,7 +340,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 					if flag{
 						rf.persist()
 					}
-					rf.nextIndex[raftId]++
+					rf.nextIndex[raftId] += len(args.Entries)
 				}else {
 					for i := 1; i <= args.PrevIndex; i++{
 						rf.logPersistRecord[i]++
@@ -391,10 +396,10 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 			rf.lastLogTerm = rf.logBuff[rf.lastLogIndex].Term
 		}
 		/* 追加日志 */
-		if args.HaveEnt {
-			rf.logBuff = append(rf.logBuff, args.Entries)
-			rf.lastLogIndex++
-			rf.lastLogTerm = args.Entries.Term
+		if len(args.Entries) > 0 {
+			rf.logBuff = append(rf.logBuff, args.Entries...)
+			rf.lastLogIndex += len(args.Entries)
+			rf.lastLogTerm = args.Entries[len(args.Entries) - 1].Term
 		}
 		/* 更新日志提交索引 */
 		if args.CommitIndex > rf.commitIndex{
@@ -457,7 +462,7 @@ func (rf *Raft) asCandidateProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatR
 			reply.LastIndex = args.PrevIndex - 1
 		}
 	}
-	if args.HaveEnt {
+	if len(args.Entries) > 0 {
 		log.Fatal("第一次心跳就发送了日志,不正常的状态。")
 	}
 	rf.toBeFollower(args.CurrTerm, args.Sender, args.Sender)
@@ -481,7 +486,7 @@ func (rf *Raft) asLeaderProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRepl
 			reply.LastIndex = args.PrevIndex - 1
 		}
 	}
-	if args.HaveEnt {
+	if len(args.Entries) > 0 {
 		log.Fatal("第一次心跳就发送了日志,不正常的状态。")
 	}
 	rf.toBeFollower(args.CurrTerm, args.Sender, args.Sender)
@@ -622,11 +627,10 @@ func (rf *Raft) readPersist(data []byte) {
 type HeartbeatArgs struct{
 	Sender 		int
 	CurrTerm 	int
-	PrevIndex 	int 		// 上一次的索引
-	PrevTerm 	int 		// 上一次的任期
-	HaveEnt		bool 		// 当前是否携带日志条目
-	Entries 	LogEntries  // 日志条目
-	CommitIndex int 		// 当前提交的索引
+	PrevIndex 	int 			// 上一次的索引
+	PrevTerm 	int 			// 上一次的任期
+	Entries 	[]LogEntries  	// 日志条目
+	CommitIndex int 			// 当前提交的索引
 }
 
 type HeartbeatReply struct{
