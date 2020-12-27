@@ -835,7 +835,8 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			cfg.setlongreordering(true) // 这句话有什么用?
 		}
 		leader := -1
-		for i := 0; i < servers; i++ { // 遍历所有服务器,找到领导。
+		// 遍历所有服务器,找到领导。
+		for i := 0; i < servers; i++ {
 			_, _, ok := cfg.rafts[i].Start(rand.Int() % 10000)
 			if ok && cfg.connected[i] { // 如若是领导并且网络无故障。
 				leader = i
