@@ -20,6 +20,7 @@ func nrand() int64 {
 
 /*
 客户端与服务器是多对多的关系,并不是一一对应。
+servers []*labrpc.ClientEnd : k/v server
 */
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
@@ -40,6 +41,11 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 //
+/*
+1) 先找到真正的领导者
+	i) 随机找一个raft服务器,如若是领导者则会返回提交结果,否则会告诉领导者是谁。
+2) 向其发送请求
+*/
 func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
@@ -56,6 +62,11 @@ func (ck *Clerk) Get(key string) string {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 //
+/*
+1) 先找到真正的领导者
+	i) 随机找一个raft服务器,如若是领导者则会返回提交结果,否则会告诉领导者是谁。
+2) 向其发送请求
+*/
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
 	//ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)

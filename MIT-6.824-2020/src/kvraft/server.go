@@ -40,11 +40,15 @@ type KVServer struct {
 	// Your definitions here.
 }
 
-
+/*
+从map中取得数据并且返回。
+*/
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 }
-
+/*
+修改map中的数据,要修改先要将数据给raft,然后看管道中传出的数据。
+*/
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 }
@@ -59,6 +63,19 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // about this, but it may be convenient (for example)
 // to suppress debug output from a Kill()ed instance.
 //
+/*
+当KVServer实例不调用Kill()时，测试人员调用Kill()
+需要一次。
+为了您的方便，我们提供
+设置rf.dead的代码(不需要锁)，
+和一个用于测试rf.dead的killed()方法
+长时间运行的循环。
+您也可以添加自己的
+杀死()代码。
+你没有被要求做任何事
+关于这个，但可能方便(例如)
+抑制来自Kill()实例的调试输出。
+*/
 func (kv *KVServer) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()

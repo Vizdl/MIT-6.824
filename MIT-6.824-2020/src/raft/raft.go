@@ -49,7 +49,7 @@ const HEARTBEATTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
 const MINVOTETIMEOUT int64 = 150000000
 const VOTETIMEOUTTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
 const HEARTBEATTIMEOUT int64 = 50000000
-const ONEMAXLOGCOUNT int = 5 /* 一次性提交的日志大于1存在安全隐患? */
+const ONEMAXLOGCOUNT int = 5
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
