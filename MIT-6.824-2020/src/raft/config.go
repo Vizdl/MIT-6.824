@@ -172,12 +172,13 @@ func (cfg *config) start1(i int) {
 
 	// listen to messages from Raft indicating newly committed messages.
 	applyCh := make(chan ApplyMsg)
+	/* 获取管道内的结果 */
 	go func() {
 		for m := range applyCh {
 			err_msg := ""
 			if m.CommandValid == false {
 				// ignore other types of ApplyMsg
-			} else if v, ok := (m.Command).(int); ok {
+			} else if v, ok := (m.Command).(int); ok { /* 获取消息 */
 				cfg.mu.Lock()
 				for j := 0; j < len(cfg.logs); j++ {
 					if old, oldok := cfg.logs[j][m.CommandIndex]; oldok && old != v {

@@ -1,6 +1,10 @@
 package kvraft
 
-import "labrpc"
+import (
+	"labrpc"
+	"log"
+	"time"
+)
 import "crypto/rand"
 import "math/big"
 
@@ -10,6 +14,9 @@ type Clerk struct {
 	// You will have to modify this struct.
 }
 
+/*
+随机函数 : 获取int64范围内的随机整数
+*/
 func nrand() int64 {
 	max := big.NewInt(int64(1) << 62)
 	bigx, _ := rand.Int(rand.Reader, max)
@@ -23,8 +30,10 @@ func nrand() int64 {
 servers []*labrpc.ClientEnd : k/v server
 */
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
-	ck := new(Clerk)
-	ck.servers = servers
+	ck := &Clerk{
+		servers : servers,
+	}
+
 	// You'll have to add code here.
 	return ck
 }
@@ -47,9 +56,19 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 2) 向其发送请求
 */
 func (ck *Clerk) Get(key string) string {
-
 	// You will have to modify this function.
-	return ""
+	/* 随机选取一个服务器 */
+	log.Println("Get 开始")
+	ok := true
+	server := 0
+	args := GetArgs{ Key: key }
+	reply := GetReply{ Err : ErrWrongLeader }
+	for reply.Err == ErrWrongLeader || !ok {
+		log.Printf("Get 向第 %d 台服务器进行 尝试中",server)
+		server = int(nrand()) % (len(ck.servers))
+		ok = ck.servers[server].Call("KVServer.Get", &args, &reply)
+	}
+	return reply.Value
 }
 
 //
@@ -70,6 +89,22 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
 	//ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+	/* 随机选取一个服务器 */
+	log.Println("PutAppend 开始")
+	ok := true
+	server := 0
+	args := PutAppendArgs{
+		Key: key,
+		Value: value,
+		Op: op,
+	}
+	reply := PutAppendReply{ Err: ErrWrongLeader}
+	for reply.Err == ErrWrongLeader || !ok {
+		server = int(nrand()) % (len(ck.servers))
+		time.Sleep(10000)
+		ok = ck.servers[server].Call("KVServer.PutAppend", &args, &reply)
+	}
+	log.Printf("client call ok, args : %+v, reply : %+v",args,reply)
 }
 
 func (ck *Clerk) Put(key string, value string) {

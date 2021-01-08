@@ -4,6 +4,7 @@ const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongLeader = "ErrWrongLeader"
+	RaftNoResponse = "RaftNoResponse"
 )
 
 type Err string
@@ -20,6 +21,7 @@ type PutAppendArgs struct {
 
 type PutAppendReply struct {
 	Err Err
+	Leader int
 }
 
 type GetArgs struct {
@@ -30,4 +32,5 @@ type GetArgs struct {
 type GetReply struct {
 	Err   Err
 	Value string
+	Leader int
 }

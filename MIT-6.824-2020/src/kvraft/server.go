@@ -23,6 +23,9 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Key   string
+	Value string
+	Op    string // "Put" or "Append"
 }
 /*
 KVServer : 将数据传达到 raft协议层,如若返回到applyCh则表明提交成功。
@@ -38,20 +41,80 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	datas map[string]string
+	leaderChancel chan raft.ApplyMsg // 接收数据的地方
 }
 
 /*
+首先判断当前服务器是否是领导者,如若是则接受请求,如若不是则告诉请求者真正的领导者是谁。
 从map中取得数据并且返回。
 */
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	reply.Leader = kv.rf.RaftStatus()
+	if reply.Leader == kv.me {
+		reply.Err = OK
+		kv.mu.Lock()
+		reply.Value = kv.datas[args.Key]
+		kv.mu.Unlock()
+	}
 }
 /*
+首先判断当前服务器是否是领导者,如若是则接受请求,如若不是则告诉请求者真正的领导者是谁。
 修改map中的数据,要修改先要将数据给raft,然后看管道中传出的数据。
 */
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	command := Op {
+		Op: args.Op,
+		Key: args.Key,
+		Value: args.Value,
+	}
+	log.Printf("第 %d 个 k/v Raft 服务器 收到 PutAppend 指令 : %+v", kv.me, args)
+	/* 如若该 raft 是 Leader 则会自动执行同步,等待同步结果出来就可以知道是否提交成功了 */
+	log.Printf("调用LogRequest")
+	//ok := kv.rf.LogRequest(logRequestArgs, logRequestReply)
+	_, currLeader, ok := kv.rf.Start(command)
+	log.Printf("调用LogRequest完毕")
+
+	//reply.Leader = logRequestReply.CurrLeader
+	reply.Leader = currLeader
+	/* 堵塞等待消息,如若得到则 */
+	if ok {
+		reply.Err = OK
+		log.Printf("读取消息")
+		a := <-kv.leaderChancel // message :=  读取消息等待
+		log.Printf("%+v",a)
+		log.Printf("读取消息完毕")
+	}else {
+		reply.Err = ErrWrongLeader
+	}
+	log.Printf("第 %d 个 k/v Raft 服务器 收到 PutAppend 指令 : %+v, 返回结果为 : %+v ", kv.me, args, reply)
 }
+
+/* 读取管道中的消息 */
+func (kv *KVServer) ReadApplyCh (){
+	for true {
+		log.Printf("第 %d 台服务器ReadApplyCh : ready read applyCh", kv.me)
+		message := <-kv.applyCh
+		log.Printf("第 %d 台服务器ReadApplyCh : read applyCh ok", kv.me)
+		op := (message.Command).(Op)
+		kv.mu.Lock()
+		if op.Op == "Put"{
+			kv.datas[op.Key] = op.Value
+		}else {
+			kv.datas[op.Key] += op.Value
+		}
+		log.Printf("第 %d 台服务器kv.rf.RaftStatus() == kv.me begin", kv.me)
+		if kv.rf.RaftStatus() == kv.me {
+			log.Printf("第 %d 台服务器将应用消息同步到 leaderChancel内了", kv.me)
+			kv.leaderChancel <- message
+		}
+		log.Printf("第 %d 台服务器kv.rf.RaftStatus() == kv.me end", kv.me)
+		kv.mu.Unlock()
+	}
+}
+
 
 //
 // the tester calls Kill() when a KVServer instance won't
@@ -118,13 +181,14 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv := new(KVServer)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
-
+	kv.datas = make(map[string]string)
 	// You may need initialization code here.
 
 	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.leaderChancel = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh) // 创建raft服务器
 
 	// You may need initialization code here.
-
+	go kv.ReadApplyCh()
 	return kv
 }

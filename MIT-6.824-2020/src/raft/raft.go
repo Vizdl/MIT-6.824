@@ -819,7 +819,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.lastLogIndex++
 	}
 	rf.StartLog(command, isSucceed)
-	return rf.lastLogIndex, rf.currTerm, isSucceed
+	return rf.lastLogIndex, rf.currLeader, isSucceed
 }
 
 
@@ -856,6 +856,16 @@ func (rf *Raft) Kill() {
 	rf.mu.Unlock()
 	rf.dead = 1
 	rf.killLog()
+}
+
+
+/*
+函数功能 : 提供给 k/v server 的服务,用来获取当前Raft状态
+*/
+func (rf *Raft) RaftStatus() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.currLeader
 }
 
 func (rf *Raft) killed() bool {
