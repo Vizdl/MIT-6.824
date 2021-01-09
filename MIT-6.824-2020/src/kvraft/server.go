@@ -33,6 +33,7 @@ KVServer : 将数据传达到 raft协议层,如若返回到applyCh则表明提�
 */
 type KVServer struct {
 	mu      sync.Mutex
+	writemu sync.Mutex
 	me      int			// 当前服务器的序号
 	rf      *raft.Raft	// 这个k/v服务器的raft服务器。
 	applyCh chan raft.ApplyMsg // 接收数据的地方
@@ -51,13 +52,17 @@ type KVServer struct {
 */
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	reply.Leader = kv.rf.RaftStatus()
-	if reply.Leader == kv.me {
+	log.Printf("第 %d 个 k/v Raft 服务器 收到 Get 指令 : %+v ", kv.me, args)
+	kv.mu.Lock()
+	if kv.rf.RaftStatus() == kv.me {
+		log.Printf("第 %d 个 k/v Raft 服务器 收到 Get 指令, 并认为自己是领导者 ", kv.me)
 		reply.Err = OK
-		kv.mu.Lock()
 		reply.Value = kv.datas[args.Key]
-		kv.mu.Unlock()
+	}else {
+		reply.Err = ErrWrongLeader
 	}
+	kv.mu.Unlock()
+	log.Printf("第 %d 个 k/v Raft 服务器 收到 Get 指令 : %+v, 返回结果为 : %+v ", kv.me, args, reply)
 }
 /*
 首先判断当前服务器是否是领导者,如若是则接受请求,如若不是则告诉请求者真正的领导者是谁。
@@ -72,23 +77,34 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 	log.Printf("第 %d 个 k/v Raft 服务器 收到 PutAppend 指令 : %+v", kv.me, args)
 	/* 如若该 raft 是 Leader 则会自动执行同步,等待同步结果出来就可以知道是否提交成功了 */
-	log.Printf("调用LogRequest")
-	//ok := kv.rf.LogRequest(logRequestArgs, logRequestReply)
+	log.Printf("准备抢占kv.writemu")
+	kv.mu.Lock()
+	log.Printf("成功抢占kv.writemu")
+	log.Printf("准备利用raft同步请求")
 	_, currLeader, ok := kv.rf.Start(command)
-	log.Printf("调用LogRequest完毕")
-
-	//reply.Leader = logRequestReply.CurrLeader
+	log.Printf("成功利用raft同步请求")
 	reply.Leader = currLeader
 	/* 堵塞等待消息,如若得到则 */
 	if ok {
+		log.Printf("当前server是领导者")
 		reply.Err = OK
-		log.Printf("读取消息")
-		a := <-kv.leaderChancel // message :=  读取消息等待
-		log.Printf("%+v",a)
-		log.Printf("读取消息完毕")
+		log.Printf("准备应用消息")
+		message := <-kv.leaderChancel // message :=  读取消息等待
+		op := (message.Command).(Op)
+		if op.Op == "Put"{
+			kv.datas[op.Key] = op.Value
+		}else {
+			kv.datas[op.Key] += op.Value
+		}
+		log.Printf("成功应用消息")
 	}else {
+		log.Printf("当前server不是领导者")
 		reply.Err = ErrWrongLeader
 	}
+	log.Printf("准备释放kv.writemu")
+	kv.mu.Unlock()
+	log.Printf("成功释放kv.writemu")
+
 	log.Printf("第 %d 个 k/v Raft 服务器 收到 PutAppend 指令 : %+v, 返回结果为 : %+v ", kv.me, args, reply)
 }
 
@@ -98,20 +114,12 @@ func (kv *KVServer) ReadApplyCh (){
 		log.Printf("第 %d 台服务器ReadApplyCh : ready read applyCh", kv.me)
 		message := <-kv.applyCh
 		log.Printf("第 %d 台服务器ReadApplyCh : read applyCh ok", kv.me)
-		op := (message.Command).(Op)
-		kv.mu.Lock()
-		if op.Op == "Put"{
-			kv.datas[op.Key] = op.Value
-		}else {
-			kv.datas[op.Key] += op.Value
-		}
 		log.Printf("第 %d 台服务器kv.rf.RaftStatus() == kv.me begin", kv.me)
 		if kv.rf.RaftStatus() == kv.me {
 			log.Printf("第 %d 台服务器将应用消息同步到 leaderChancel内了", kv.me)
 			kv.leaderChancel <- message
 		}
 		log.Printf("第 %d 台服务器kv.rf.RaftStatus() == kv.me end", kv.me)
-		kv.mu.Unlock()
 	}
 }
 

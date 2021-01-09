@@ -1,4 +1,4 @@
-// +build !debug
+// +build !raft_debug
 
 package raft
 

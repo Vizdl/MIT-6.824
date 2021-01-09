@@ -53,3 +53,5 @@ Check that your code is race-free using go test -race.
 客户端 读写 请求:
  读 : 必须保障读的服务器拥有最新日志,这个服务器必须要领导者来认可。
  写 : 写完才返回。
+
+ go test -run 3A -tags "debug" > log.txt

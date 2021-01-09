@@ -64,9 +64,12 @@ func (ck *Clerk) Get(key string) string {
 	args := GetArgs{ Key: key }
 	reply := GetReply{ Err : ErrWrongLeader }
 	for reply.Err == ErrWrongLeader || !ok {
-		log.Printf("Get 向第 %d 台服务器进行 尝试中",server)
 		server = int(nrand()) % (len(ck.servers))
+		log.Printf("\nGet 向第 %d 台服务器进行 尝试中",server)
 		ok = ck.servers[server].Call("KVServer.Get", &args, &reply)
+		if (reply.Err == ErrWrongLeader && reply.Leader == -1) || !ok {
+			time.Sleep(100000)
+		}
 	}
 	return reply.Value
 }
@@ -98,11 +101,14 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		Value: value,
 		Op: op,
 	}
-	reply := PutAppendReply{ Err: ErrWrongLeader}
+	reply := PutAppendReply{Err: ErrWrongLeader}
 	for reply.Err == ErrWrongLeader || !ok {
 		server = int(nrand()) % (len(ck.servers))
-		time.Sleep(10000)
+		log.Printf("\nPutAppend 向第 %d 台服务器进行 尝试中",server)
 		ok = ck.servers[server].Call("KVServer.PutAppend", &args, &reply)
+		if (reply.Err == ErrWrongLeader && reply.Leader == -1) || !ok {
+			time.Sleep(100000)
+		}
 	}
 	log.Printf("client call ok, args : %+v, reply : %+v",args,reply)
 }
