@@ -1,21 +1,5 @@
 package raft
 
-//
-// this is an outline of the API that raft must expose to
-// the service (or tester). see comments below for
-// each of these functions for more details.
-//
-// rf = Make(...)
-//   create a new Raft server.
-// rf.Start(command interface{}) (index, term, isleader)
-//   start agreement on a new log entry
-// rf.GetState() (term, isLeader)
-//   ask a Raft for its current term, and whether it thinks it is leader
-// ApplyMsg
-//   each time a new entry is committed to the log, each Raft peer
-//   should send an ApplyMsg to the service (or tester)
-//   in the same server.
-//
 /*
 ApplyMsg
 每次一个新条目被提交到日志中时，每个筏对等点
@@ -33,7 +17,7 @@ import (
 )
 import "labrpc"
 
-
+// raft 节点状态
 type ERaftStatus int32
 const (
 	RaftFollower ERaftStatus = iota
@@ -50,17 +34,7 @@ const MINVOTETIMEOUT int64 = 150000000
 const VOTETIMEOUTTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
 const HEARTBEATTIMEOUT int64 = 50000000
 const ONEMAXLOGCOUNT int = 5
-//
-// as each Raft peer becomes aware that successive log entries are
-// committed, the peer should send an ApplyMsg to the service (or
-// tester) on the same server, via the applyCh passed to Make(). set
-// CommandValid to true to indicate that the ApplyMsg contains a newly
-// committed log entry.
-//
-// in Lab 3 you'll want to send other kinds of messages (e.g.,
-// snapshots) on the applyCh; at that point you can add fields to
-// ApplyMsg, but set CommandValid to false for these other uses.
-//
+
 /*
 当每个raft意识到接替的日志条目是提交后，
 对等方应该发送一个ApplyMsg到同一服务器上的service(or tester),
@@ -87,17 +61,15 @@ type LogEntries struct {
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu        sync.Mutex          // Lock to protect shared access to this peer's state
-	peers     []*labrpc.ClientEnd // RPC end points of all peers RPC所有对等点的端点,依赖该属性进行rpc通信。
-	persister *Persister          // Object to hold this peer's persisted state
+	peers     []*labrpc.ClientEnd // RPC所有对等点的端点,依赖该属性进行rpc通信。
+	persister *Persister          // 持久化对象
 	applyCh   chan ApplyMsg		  // 发送到服务器..
-	me        int                 // this peer's index into peers[]
+	me        int                 // 当前节点编号
 	dead      int32               // set by Kill() 服务器是否死亡...4字节简单数据,赋值不需要加锁
 	cond	  *sync.Cond	      // 用来控制raft主动行为的条件变量
 
-	// state a Raft server must maintain.
-
-	raftStatus ERaftStatus
+	mu        sync.Mutex          	// 状态锁
+	raftStatus ERaftStatus			// 当前 raft 节点的状态
 
 	currTerm int					/* 当前选举任期数,需要持久化 */
 	voteFor	int						/* 在当前选举任期是否已经投过了票,投给自己也算,需要持久化 */
@@ -701,10 +673,6 @@ func (rf *Raft) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) {
 	rf.HeartbeatLog(CurrTerm, raftStatus, args, reply)
 }
 
-
-//
-// example RequestVote RPC handler.
-//
 // 接收投票消息,并返回结果。
 func (rf *Raft) RequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
@@ -734,35 +702,6 @@ func (rf *Raft) RequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.RequestVoteLog(CurrTerm, raftStatus, args, reply)
 }
 
-//
-// example code to send a RequestVote RPC to a server.
-// server is the index of the target server in rf.peers[].
-// expects RPC arguments in args.
-// fills in *reply with RPC reply, so caller should
-// pass &reply.
-// the types of the args and reply passed to Call() must be
-// the same as the types of the arguments declared in the
-// handler function (including whether they are pointers).
-//
-// The labrpc package simulates a lossy network, in which servers
-// may be unreachable, and in which requests and replies may be lost.
-// Call() sends a request and waits for a reply. If a reply arrives
-// within a timeout interval, Call() returns true; otherwise
-// Call() returns false. Thus Call() may not return for a while.
-// A false return can be caused by a dead server, a live server that
-// can't be reached, a lost request, or a lost reply.
-//
-// Call() is guaranteed to return (perhaps after a delay) *except* if the
-// handler function on the server side does not return.  Thus there
-// is no need to implement your own timeouts around Call().
-//
-// look at the comments in ../labrpc/labrpc.go for more details.
-//
-// if you're having trouble getting RPC to work, check that you've
-// capitalized all field names in structs passed over RPC, and
-// that the caller passes the address of the reply struct with &, not
-// the struct itself.
-//
 // 向编号为i的服务器发送投票消息
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
@@ -776,20 +715,6 @@ func (rf *Raft) sendHeartbeat(server int, args *HeartbeatArgs, reply *HeartbeatR
 	return ok
 }
 
-//
-// the service using Raft (e.g. a k/v server) wants to start
-// agreement on the next command to be appended to Raft's log. if this
-// server isn't the leader, returns false. otherwise start the
-// agreement and return immediately. there is no guarantee that this
-// command will ever be committed to the Raft log, since the leader
-// may fail or lose an election. even if the Raft instance has been killed,
-// this function should return gracefully.
-//
-// the first return value is the index that the command will appear at
-// if it's ever committed. the second return value is the current
-// term. the third return value is true if this server believes it is
-// the leader.
-//
 /*
 使用raft的服务(例如k/v服务器)想要启动
 下一条命令要附加到raft的日志上。
@@ -822,20 +747,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	return rf.lastLogIndex, rf.currLeader, isSucceed
 }
 
-
-//
-// the tester calls Kill() when a Raft instance won't
-// be needed again. for your convenience, we supply
-// code to set rf.dead (without needing a lock),
-// and a killed() method to test rf.dead in
-// long-running loops. you can also add your own
-// code to Kill(). you're not required to do anything
-// about this, but it may be convenient (for example)
-// to suppress debug output from a Kill()ed instance.
-//
 func (rf *Raft) Kill() {
-	//atomic.StoreInt32(&rf.dead, 1)
-	// Your code here, if desired.
 	rf.mu.Lock()
 	if rf.raftStatus == RaftFollower{
 		if rf.heartbeatTimer != nil{
@@ -869,21 +781,9 @@ func (rf *Raft) RaftStatus() int {
 }
 
 func (rf *Raft) killed() bool {
-	//z := atomic.LoadInt32(&rf.dead)
 	return rf.dead == 1
 }
 
-//
-// the service or tester wants to create a Raft server. the ports
-// of all the Raft servers (including this one) are in peers[]. this
-// server's port is peers[me]. all the servers' peers[] arrays
-// have the same order. persister is a place for this server to
-// save its persistent state, and also initially holds the most
-// recent saved state, if any. applyCh is a channel on which the
-// tester or service expects Raft to send ApplyMsg messages.
-// Make() must return quickly, so it should start goroutines
-// for any long-running work.
-//
 /*
 服务或测试人员希望创建一个Raft服务器。
 所有Raft服务器(包括这个服务器)的端口都在peer[]中。
