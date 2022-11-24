@@ -29,7 +29,7 @@ const (
 const NOLEADER = -1
 const NOVOTEFOR = -1
 const MINHEARTBEATTIMEOUT int64 = 150000000
-const HEARTBEATTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
+const HEARTBEATTIMEOUTSECTIONSIZE int64 = 300000000 // 如若为负数会报错
 const MINVOTETIMEOUT int64 = 150000000
 const VOTETIMEOUTTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
 const HEARTBEATTIMEOUT int64 = 50000000
@@ -58,31 +58,39 @@ type LogEntries struct {
 }
 
 type Raft struct {
-	peers     []*labrpc.ClientEnd // RPC所有对等点的端点,依赖该属性进行rpc通信。
-	persister *Persister          // 持久化对象
-	applyCh   chan ApplyMsg		  // 发送到服务器..
-	me        int                 // 当前节点编号
-	dead      int32               // set by Kill() 服务器是否死亡...4字节简单数据,赋值不需要加锁
-	cond	  *sync.Cond	      // 用来控制raft主动行为的条件变量
+	// raft rpc
+	peers     []*labrpc.ClientEnd 	// RPC所有对等点的端点,依赖该属性进行rpc通信。
+	me        int                 	// 当前节点编号
+	// 持久化
+	persister *Persister          	// 持久化对象
+	// 日志应用句柄
+	applyCh   chan ApplyMsg		  	// 发送到服务器..
 
+
+	/*** 通用数据 ***/
+	cond	  *sync.Cond	      	// 用来控制raft主动行为的条件变量
+	// 状态
 	mu        sync.Mutex          	// 状态锁
 	raftStatus ERaftStatus			// 当前 raft 节点的状态
-
-	currTerm int					/* 当前选举任期数,需要持久化 */
-	voteFor	int						/* 在当前选举任期是否已经投过了票,投给自己也算,需要持久化 */
-	lastLogIndex int 				/* 上一条日志的索引 */
-	lastLogTerm int 				/* 上一条日志的任期 */
-	commitIndex int					/* 当前节点已知的,最大的,已提交的日志索引 */
-	lastApplied int 				/* 表示当前节点最后一条被应用到状态机的日志索引 */
-	logBuff []LogEntries			/* 日志缓存,内含日志条目与日志产生的任期 */
-
-	currLeader int					/* 作为追随者有效, 当前届领导者 */
-	heartbeatTimer *time.Timer 		/* 作为追随者有效, 心跳定时器 */
-	acquiredVote uint				/* 作为候选者有效, 在当前选举周期获得的票数 */
-	hasVoteResult []bool			/* 作为候选者有效, 对方在当前轮是否给我投过票,即使对方投的是反对票,这里也会变为true */
-	voteTimer *time.Timer 			/* 作为候选者有效, 选举定时器 */
-	nextIndex []int					/* 作为领导者有效, nextIndex[i] : ID 为 i 的 raft 下一条日志的索引的猜测值,用以同步日志。 */
-	logPersistRecord []int			/* 作为领导者有效, logPersistRecord[i] : 第 i 条日志条目被 logPersistRecord[i] 台 raft 持久化,领导者用来统计当前任期内日志是否应该被提交 */
+	currTerm int					// 当前选举任期数,需要持久化
+	dead      int32               	// set by Kill() 服务器是否死亡...4字节简单数据,赋值不需要加锁
+	// 日志
+	logBuff []LogEntries			// 日志缓存,内含日志条目与日志产生的任期
+	lastLogIndex int 				// 上一条日志的索引
+	lastLogTerm int 				// 上一条日志的任期
+	commitIndex int					// 当前节点已知的,最大的,已提交的日志索引
+	lastApplied int 				// 表示当前节点最后一条被应用到状态机的日志索引
+	/*** 追随者和候选者有效 ***/
+	voteFor	int						// 在当前选举任期是否已经投过了票,投给自己也算
+	/*** 追随者有效 ***/
+	currLeader int					// 当前届领导者
+	heartbeatTimer *time.Timer 		// 心跳定时器
+	/*** 候选者有效 ***/
+	acquiredVote uint				// 在当前选举周期获得的票数
+	voteTimer *time.Timer 			// 选举定时器
+	/*** 领导者有效 ***/
+	nextIndex []int					// nextIndex[i] : ID 为 i 的 raft 下一条日志的索引的猜测值,用以同步日志
+	logPersistRecord []int			// logPersistRecord[i] : 第 i 条日志条目被 logPersistRecord[i] 台 raft 持久化,领导者用来统计当前任期内日志是否应该被提交
 }
 
 // 转换为追随者
@@ -107,9 +115,6 @@ func (rf *Raft) toBeCandidate(){
 	rf.currTerm++
 	rf.acquiredVote = 1 // 自己投自己一票
 	rf.voteFor = rf.me
-	for i := 0; i < len(rf.peers); i++{
-		rf.hasVoteResult[i] = i == rf.me
-	}
 	rf.currLeader = NOLEADER
 	rf.raftStatus = RaftCandidate
 	limit := time.Duration(MINVOTETIMEOUT + rand.Int63n(VOTETIMEOUTTIMEOUTSECTIONSIZE))
@@ -125,7 +130,6 @@ func (rf *Raft) toBeCandidate(){
 // 转换为领导者
 func (rf *Raft) toBeLeader(){
 	rf.voteSucceedLog()
-	rf.acquiredVote = 0
 	rf.currLeader = rf.me
 	rf.raftStatus = RaftLeader
 	for i := 0; i <= rf.lastLogIndex; i++{
@@ -177,62 +181,42 @@ func (rf *Raft) toSendRequestVote(CurrTerm int, raftId int){
 		LastLogIndex: rf.lastLogIndex,
 		CommitIndex: rf.commitIndex,
 	}
-	voteSucceed := false
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	for rf.raftStatus == RaftCandidate && rf.currTerm == CurrTerm && !rf.hasVoteResult[raftId] {
+	for rf.raftStatus == RaftCandidate && rf.currTerm == CurrTerm {
 		/* 趁着发送消息的间隙,解锁,看看这时候有没有事件发生 */
 		rf.mu.Unlock()
 		reply := RequestVoteReply{}
 		isCalled := rf.sendRequestVote(raftId, &args, &reply)
 		rf.mu.Lock()
-		/* 看一下投票请求过程中是否有事件发生,如若状态发生改变,则退出。 */
+		// 如若状态发生改变,则退出。
 		if rf.raftStatus != RaftCandidate || rf.currTerm != CurrTerm {
 			break
 		}
-		/* 如若调用失败 */
+		// 对 rpc 调用进行检查
 		if !isCalled {
 			continue
 		}
-		/* 检验是否正确的回复格式 */
+		// 对对方 id 进行检查
 		if reply.Replyer != raftId {
+			log.Fatal("向",raftId,"发送投票请求,但是收到回复id却是 :", reply.Replyer)
+		}
+		// 如若对方任期小于自己则重试
+		if reply.CurrTerm < rf.currTerm {
 			continue
 		}
-
-		if rf.voteTimer == nil {
-			log.Fatal("第",rf.me,"台服务器处于候选者状态但是rf.voteTimer == nil")
-		}
-		/* 已经正确地请求投票且得到结果,对结果进行处理 */
-		rf.hasVoteResult[raftId] = true
-		if !reply.ReplyStatus && reply.CurrTerm > rf.currTerm{
-			/* 如若关闭成功,则直接变成下一届的追随者,如若失败,等待超时事件发生 */
-			if rf.voteTimer.Stop() {
-				rf.toBeFollower(reply.CurrTerm, NOVOTEFOR, NOLEADER)
-			}else {
-				for rf.raftStatus == RaftCandidate && rf.currTerm == CurrTerm {
-					rf.cond.Wait()
-				}
-			}
-		}
-		if reply.ReplyStatus && reply.CurrTerm <= rf.currTerm{
+		// 如若对方任期大于等于自己,则按照对方的应答判断是否获得票
+		if reply.ReplyStatus {
 			rf.acquiredVote++
 			if rf.acquiredVote >= uint(len(rf.peers)) / 2 + 1 {
-				/* 如若关闭成功,则直接变成下一届的追随者,如若失败,等待超时事件发生 */
-				if rf.voteTimer.Stop(){
-					voteSucceed = true
-				}else {
-					for rf.raftStatus == RaftCandidate && rf.currTerm == CurrTerm {
-						rf.cond.Wait()
-					}
+				// 如若关闭成功
+				if rf.voteTimer != nil && rf.voteTimer.Stop(){
+					rf.toBeLeader()
 				}
 			}
 		}
 		/* 只要有结果了,就退出循环 */
 		break
-	}
-	// 如若投票成功
-	if voteSucceed {
-		rf.toBeLeader()
 	}
 }
 
@@ -326,42 +310,35 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 			}
 		}
 		/* 如若状态没发生改变,根据定时器,来定时堵塞。 */
-		if rf.raftStatus == RaftLeader && rf.currTerm == CurrTerm {
-			if time.Now().UnixNano() - lastTick > 10000000{
-				rf.mu.Unlock()
-				time.Sleep(time.Duration(10 * time.Millisecond))
-				rf.mu.Lock()
-			}else {
-				time.Sleep(time.Duration(time.Millisecond))
-			}
+		rf.mu.Unlock()
+		if tick - lastTick > 10000000 {
+			time.Sleep(time.Duration(10 * time.Millisecond))
+		}else {
+			time.Sleep(time.Duration(time.Millisecond))
 		}
+		rf.mu.Lock()
 	}
 }
 
 func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatReply) {
-	/* 参数初始化 */
-	reply.Replyer = rf.me
-	reply.CurrTerm = rf.currTerm
-	reply.ReplyStatus = false
-	/* 检查自身状态是否正常 */
-	if rf.heartbeatTimer == nil {
-		fmt.Println("第 ",rf.me," 台服务器作为追随者时, rf.heartbeatTimer == nil")
-		return
-	}
-	/* 阻拦无效数据包 */
+	// 阻拦无效数据包
 	if args.CurrTerm < rf.currTerm {
 		return
 	}
 	/* 如若心跳事件已经发生,拒绝所有当前心跳包,等待状态转换。 */
-	if !rf.heartbeatTimer.Stop() {
+	if rf.heartbeatTimer == nil || !rf.heartbeatTimer.Stop() {
 		fmt.Println("第 ",rf.me," 台服务器作为追随者关闭定时器异常,表示心跳超时已经发生了")
 		return
 	}
 	/* 如若出现两个领导者 */
 	if rf.currLeader != NOLEADER && args.CurrTerm == rf.currTerm && args.Sender != rf.currLeader{
-		log.Println("第 ",rf.me," 台服务器在第 ",rf.currTerm," 届收到心跳包,但领导应该是 ",rf.currLeader," 却收到 ",args.Sender," 发送的心跳包")
+		log.Fatal("第 ",rf.me," 台服务器在第 ",rf.currTerm," 届收到心跳包,但领导应该是 ",rf.currLeader," 却收到 ",args.Sender," 发送的心跳包")
 		return
 	}
+	/* 参数初始化 */
+	reply.Replyer = rf.me
+	reply.CurrTerm = rf.currTerm
+	reply.ReplyStatus = false
 	/* args.PrevIndex <= rf.lastLogIndex 是考虑到 对方比我方日志更少 */
 	reply.ReplyStatus = args.PrevIndex <= rf.lastLogIndex && args.PrevTerm ==  rf.logBuff[args.PrevIndex].Term
 	/* 如若找到最后一条相同日志 */
@@ -470,27 +447,31 @@ func (rf *Raft) asLeaderProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRepl
 }
 
 func (rf *Raft) asFollowerProcRequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
+	// 默认答复
 	reply.Replyer = rf.me
-	reply.CurrTerm = rf.currTerm
 	reply.ReplyStatus = false
-	if args.CurrTerm < rf.currTerm || (args.CurrTerm == rf.currTerm && rf.voteFor != NOVOTEFOR) {
+	reply.CurrTerm = rf.currTerm
+	// 根据任期和是否投票决定是否需要拒绝
+	if args.CurrTerm < rf.currTerm {
 		return
 	}
-
-	// 选举限制
-	reply.ReplyStatus = args.CommitIndex > rf.commitIndex ||
-		(args.CommitIndex == rf.commitIndex && (args.LastLogIndex >= rf.lastLogIndex && args.LastLogTerm >= rf.lastLogTerm))
-	if reply.ReplyStatus{
-		rf.voteFor = args.Requester
+	if args.CurrTerm == rf.currTerm && rf.voteFor != NOVOTEFOR {
+		return
 	}
-	if args.CurrTerm > rf.currTerm{ // 如若是新一届,则需要更新心跳超时事件,否则啥也不做(无论我是否投票给他)。
-		if rf.heartbeatTimer != nil && !rf.heartbeatTimer.Stop(){ // 如若关闭定时器失败,说明超时事件已经发生,那么直接返回false即可
+	if args.CurrTerm > rf.currTerm {
+		// 如若关闭定时器失败,说明超时事件已经发生,那么直接拒绝
+		if rf.heartbeatTimer != nil && !rf.heartbeatTimer.Stop() {
 			fmt.Println("第",rf.me,"台服务器作为追随者关闭定时器异常")
-			reply.CurrTerm++ // 返回的任期要加一
-			reply.ReplyStatus = false
 			return
 		}
-		rf.toBeFollower(args.CurrTerm, rf.voteFor, NOLEADER)
+		// 更新任期为最新
+		rf.toBeFollower(args.CurrTerm, NOVOTEFOR, NOLEADER)
+	}
+	reply.CurrTerm = rf.currTerm
+	// 选举限制
+	if args.CommitIndex > rf.commitIndex || (args.CommitIndex == rf.commitIndex && (args.LastLogIndex >= rf.lastLogIndex && args.LastLogTerm >= rf.lastLogTerm)) {
+		reply.ReplyStatus = true
+		rf.voteFor = args.Requester
 	}
 }
 
@@ -626,20 +607,17 @@ type RequestVoteArgs struct {
 }
 
 //
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
+// 投票请求答复
 //
 type RequestVoteReply struct {
-	// Your data here (2A).
-	ReplyStatus bool // 答复状态
-	Replyer int// 答复者
-	CurrTerm int // 答复者的当前任期
+	ReplyStatus bool 	// 答复状态
+	Replyer int			// 答复者
+	CurrTerm int 		// 答复者的当前任期
 }
 
-/*
-对外提供的服务 : 接收心跳包
-
-*/
+//
+// 对外提供的服务 : 接收心跳包
+//
 func (rf *Raft) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) {
 	if rf.dead != 0 { // 虽然状态是死亡,但是还没真正地被销毁。
 		reply.CurrTerm = rf.currTerm
@@ -648,7 +626,6 @@ func (rf *Raft) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) {
 		return
 	}
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	CurrTerm := rf.currTerm
 	raftStatus := rf.raftStatus
 	switch rf.raftStatus{
@@ -664,6 +641,7 @@ func (rf *Raft) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) {
 	default:
 		log.Fatal(rf.me,"当前处于未注册的状态中 : rf.raftStatus = ",rf.raftStatus)
 	}
+	rf.mu.Unlock()
 	rf.HeartbeatLog(CurrTerm, raftStatus, args, reply)
 }
 
@@ -809,7 +787,6 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 		lastApplied : 0,
 		lastLogIndex : 0, /* 日志索引从1开始,所以初始化为0 */
 		lastLogTerm : 0,
-		hasVoteResult : make([]bool, len(peers)),
 		nextIndex : make([]int, len(peers)),
 	}
 	le := LogEntries{
