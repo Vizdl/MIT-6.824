@@ -264,7 +264,7 @@ func TestConcurrentStarts2B(t *testing.T) {
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
 
-	cfg.begin("Test (2B): concurrent Start()s")
+	cfg.begin("Test (2B): concurrent Start")
 
 	var success bool
 loop:

@@ -28,12 +28,18 @@ const (
 
 const NOLEADER = -1
 const NOVOTEFOR = -1
+// 心跳超时基数
 const MINHEARTBEATTIMEOUT int64 = 200000000
+// 心跳超时随机数
 const HEARTBEATTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
+// 投票超时基数
 const MINVOTETIMEOUT int64 = 150000000
+// 投票超时随机数
 const VOTETIMEOUTTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
+// 发送心跳请求的频率
 const HEARTBEATTIMEOUT int64 = 50000000
-const ONEMAXLOGCOUNT int = 5
+// 一次性传输日志的最大数
+const ONEMAXLOGCOUNT int = 1
 
 /*
 当每个raft意识到接替的日志条目是提交后，
@@ -475,48 +481,41 @@ func (rf *Raft) asFollowerProcRequestVote (args *RequestVoteArgs, reply *Request
 }
 
 func (rf *Raft) asCandidateProcRequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
+	// 默认回复
 	reply.Replyer = rf.me
 	reply.CurrTerm = rf.currTerm
+	reply.ReplyStatus = false
 	if args.CurrTerm < rf.currTerm {
-		reply.ReplyStatus = false
 		return
 	}
 	if args.CurrTerm == rf.currTerm {
-		if rf.voteFor == NOVOTEFOR { // 当前状态一定要是已投票,否则不安全。
+		// 当前状态一定要是已投票,否则不安全。
+		if rf.voteFor == NOVOTEFOR {
 			log.Fatal(rf.me, "在 asCandidateProcRequestVote 中 !rf.hasVote 出错。")
 		}
-		reply.ReplyStatus = false
 		return
 	}
-	// 如若对方任期数大于我,则身份转换为追随者
+	// 对方任期数大于我
+	// 如若已经候选定时器超时,则返回 false,等待超时
 	if rf.voteTimer != nil && !rf.voteTimer.Stop(){
 		fmt.Println("第",rf.me,"台服务器作为候选者关闭定时器异常")
-		reply.ReplyStatus = false
 		return
 	}
-	// 选举限制
-	reply.ReplyStatus = args.CommitIndex > rf.commitIndex ||
-		(args.CommitIndex == rf.commitIndex && (args.LastLogIndex >= rf.lastLogIndex && args.LastLogTerm >= rf.lastLogTerm))
-	if reply.ReplyStatus {
-		rf.voteFor = args.Requester
-	}
-	rf.toBeFollower(args.CurrTerm, rf.voteFor, NOLEADER)
+	// 身份转换为追随者, 回复 false
+	rf.toBeFollower(args.CurrTerm, NOVOTEFOR, NOLEADER)
+	return
 }
 
 func (rf *Raft) asLeaderProcRequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Replyer = rf.me
 	reply.CurrTerm = rf.currTerm
+	reply.ReplyStatus = false
 	if args.CurrTerm <= rf.currTerm {
-		reply.ReplyStatus = false
 		return
 	}
-	// 选举限制
-	reply.ReplyStatus = args.CommitIndex > rf.commitIndex ||
-		(args.CommitIndex == rf.commitIndex && (args.LastLogIndex >= rf.lastLogIndex && args.LastLogTerm >= rf.lastLogTerm))
-	if reply.ReplyStatus {
-		rf.voteFor = args.Requester
-	}
-	rf.toBeFollower(args.CurrTerm, rf.voteFor, NOLEADER)
+	// 如若对方任期比自己高,则转换为追随者,但这次回复 false
+	rf.toBeFollower(args.CurrTerm, NOVOTEFOR, NOLEADER)
+	return
 }
 
 // return currentTerm and whether this server
