@@ -57,9 +57,6 @@ type LogEntries struct {
 	Command interface{}		/* 日志消息 */
 }
 
-//
-// A Go object implementing a single Raft peer.
-//
 type Raft struct {
 	peers     []*labrpc.ClientEnd // RPC所有对等点的端点,依赖该属性进行rpc通信。
 	persister *Persister          // 持久化对象
@@ -88,19 +85,21 @@ type Raft struct {
 	logPersistRecord []int			/* 作为领导者有效, logPersistRecord[i] : 第 i 条日志条目被 logPersistRecord[i] 台 raft 持久化,领导者用来统计当前任期内日志是否应该被提交 */
 }
 
-/*
-服务器状态转换系列函数
-*/
+// 转换为追随者
 func (rf *Raft) toBeFollower (currTerm int, voteFor int, currLeader int){
+	// 初始化数据
 	rf.raftStatus = RaftFollower
 	rf.currLeader = currLeader
 	rf.currTerm = currTerm
 	rf.voteFor = voteFor
+	// 持久化
 	rf.persist()
+	// 开启心跳定时器
 	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
 	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 }
 
+// 转换为候选者
 func (rf *Raft) toBeCandidate(){
 	if rf.voteTimer != nil && rf.voteTimer.Stop(){ // 对候选定时器做处理
 		log.Fatal("成为追随者上一个定时器却仍未关闭")
@@ -115,7 +114,7 @@ func (rf *Raft) toBeCandidate(){
 	rf.raftStatus = RaftCandidate
 	limit := time.Duration(MINVOTETIMEOUT + rand.Int63n(VOTETIMEOUTTIMEOUTSECTIONSIZE))
 	rf.voteTimer = time.AfterFunc(limit, rf.voteTimeoutEventProc) // 开启选举超时
-	// 开启追随者主动行为协程
+	// 开启协程,给其他 raft 节点发送投票请求
 	for i := 0; i < len(rf.peers); i++{
 		if rf.me != i {
 			go rf.toSendRequestVote(rf.currTerm, i)
@@ -123,6 +122,7 @@ func (rf *Raft) toBeCandidate(){
 	}
 }
 
+// 转换为领导者
 func (rf *Raft) toBeLeader(){
 	rf.voteSucceedLog()
 	rf.acquiredVote = 0
@@ -131,6 +131,7 @@ func (rf *Raft) toBeLeader(){
 	for i := 0; i <= rf.lastLogIndex; i++{
 		rf.logPersistRecord = append(rf.logPersistRecord, 1)
 	}
+	// 开启协程,给其他 raft 节点发送心跳
 	for i := 0; i < len(rf.peers); i++ {
 		rf.nextIndex[i] = rf.lastLogIndex + 1
 		if i != rf.me {
@@ -236,8 +237,7 @@ func (rf *Raft) toSendRequestVote(CurrTerm int, raftId int){
 }
 
 func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
-	/* 确保刚进入就一定能发出心跳 */
-	lastTick := time.Now().UnixNano() - HEARTBEATTIMEOUT
+	lastTick := time.Now().UnixNano() - HEARTBEATTIMEOUT // 确保刚进入就一定能发出心跳
 	/* 按照逻辑匹配成功后就不会失败 */
 	isMatch := false
 	rf.mu.Lock()
@@ -550,13 +550,8 @@ func (rf *Raft) GetState() (int, bool) {
 }
 
 //
-// save Raft's persistent state to stable storage,
-// where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
+// raft 持久化
 //
-/*
-将筏子的持续状态保存为稳定存储，在碰撞后可以重新启动。请参阅paper的图2，了解什么应该是持久的。
-*/
 func (rf *Raft) persist() {
 	// Your code here (2C).
 	w := new(bytes.Buffer)
@@ -572,13 +567,12 @@ func (rf *Raft) persist() {
 
 
 //
-// restore previously persisted state.
+// 从持久化数据里恢复状态
 //
 func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your code here (2C).
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var currTerm int					/* 当前选举任期数,需要持久化 */
@@ -792,11 +786,12 @@ persister是此服务器保存其持久状态的地方，最初还保存最近�
 applyCh是测试者或服务期望筏发送ApplyMsg消息的通道，
 Make()必须快速返回，因此它应该为任何长时间运行的工作启动goroutines。
 */
-func Make(peers []*labrpc.ClientEnd, me int,
-	persister *Persister, applyCh chan ApplyMsg) *Raft {
+func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
+	// 1. 参数检测
 	if peers == nil || len(peers) < 1 || me < 0 || me > len(peers) - 1 || persister == nil || applyCh == nil {
 		return nil
 	}
+	// 2. 初始化 raft 节点
 	rf := &Raft{
 		peers : peers,
 		persister : persister,
@@ -824,10 +819,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.logBuff = append(rf.logBuff, le)
 	rf.logPersistRecord = append(rf.logPersistRecord, len(rf.peers))
 	rf.cond = sync.NewCond(&rf.mu)
-	// Your initialization code here (2A, 2B, 2C).
+
 	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
 	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
-	// initialize from state persisted before a crash
+	// 恢复数据
 	rf.readPersist(persister.ReadRaftState())
 	return rf
 }
