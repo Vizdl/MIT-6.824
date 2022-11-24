@@ -28,8 +28,8 @@ const (
 
 const NOLEADER = -1
 const NOVOTEFOR = -1
-const MINHEARTBEATTIMEOUT int64 = 150000000
-const HEARTBEATTIMEOUTSECTIONSIZE int64 = 300000000 // 如若为负数会报错
+const MINHEARTBEATTIMEOUT int64 = 200000000
+const HEARTBEATTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
 const MINVOTETIMEOUT int64 = 150000000
 const VOTETIMEOUTTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
 const HEARTBEATTIMEOUT int64 = 50000000
@@ -68,7 +68,6 @@ type Raft struct {
 
 
 	/*** 通用数据 ***/
-	cond	  *sync.Cond	      	// 用来控制raft主动行为的条件变量
 	// 状态
 	mu        sync.Mutex          	// 状态锁
 	raftStatus ERaftStatus			// 当前 raft 节点的状态
@@ -156,7 +155,6 @@ func (rf *Raft) voteTimeoutEventProc(){
 		log.Fatal("第",rf.me,"台服务器在第",rf.currTerm,"届发生选举超时, raftStatus =",rf.raftStatus,"错误的raft状态")
 	}
 	rf.toBeCandidate()
-	rf.cond.Broadcast() // 避免关闭定时器失败时,主线程堵塞在条件变量里面了。
 }
 
 /*
@@ -325,17 +323,17 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 	if args.CurrTerm < rf.currTerm {
 		return
 	}
-	/* 如若心跳事件已经发生,拒绝所有当前心跳包,等待状态转换。 */
-	if rf.heartbeatTimer == nil || !rf.heartbeatTimer.Stop() {
-		fmt.Println("第 ",rf.me," 台服务器作为追随者关闭定时器异常,表示心跳超时已经发生了")
-		return
-	}
-	/* 如若出现两个领导者 */
+	// 如若出现两个领导者
 	if rf.currLeader != NOLEADER && args.CurrTerm == rf.currTerm && args.Sender != rf.currLeader{
 		log.Fatal("第 ",rf.me," 台服务器在第 ",rf.currTerm," 届收到心跳包,但领导应该是 ",rf.currLeader," 却收到 ",args.Sender," 发送的心跳包")
 		return
 	}
-	/* 参数初始化 */
+	// 关闭心跳,如若心跳事件已经发生,拒绝所有当前心跳包,等待状态转换。
+	if rf.heartbeatTimer == nil || !rf.heartbeatTimer.Stop() {
+		fmt.Println("第 ",rf.me," 台服务器作为追随者关闭定时器异常,表示心跳超时已经发生了")
+		return
+	}
+	// 默认回复
 	reply.Replyer = rf.me
 	reply.CurrTerm = rf.currTerm
 	reply.ReplyStatus = false
@@ -423,14 +421,15 @@ func (rf *Raft) asCandidateProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatR
 }
 
 func (rf *Raft) asLeaderProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatReply) {
+	if args.CurrTerm == rf.currTerm {
+		log.Fatal("第",rf.me,"台服务器在第",rf.currTerm,"领导应该是自己却收到",args.Sender,"发送的心跳包")
+	}
+	// 默认回复
 	reply.Replyer = rf.me
 	reply.CurrTerm = rf.currTerm
 	reply.ReplyStatus = false
 	if args.CurrTerm < rf.currTerm {
 		return
-	}
-	if args.CurrTerm == rf.currTerm {
-		log.Fatal("第",rf.me,"台服务器在第",rf.currTerm,"领导应该是自己却收到",args.Sender,"发送的心跳包")
 	}
 	reply.ReplyStatus = args.PrevIndex == rf.lastLogIndex && args.PrevTerm ==  rf.lastLogTerm
 	if !reply.ReplyStatus {
@@ -736,7 +735,6 @@ func (rf *Raft) Kill() {
 		}
 	}
 	rf.raftStatus = RaftDead
-	rf.cond.Broadcast()
 	rf.mu.Unlock()
 	rf.dead = 1
 	rf.killLog()
@@ -795,7 +793,6 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	}
 	rf.logBuff = append(rf.logBuff, le)
 	rf.logPersistRecord = append(rf.logPersistRecord, len(rf.peers))
-	rf.cond = sync.NewCond(&rf.mu)
 
 	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
 	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
