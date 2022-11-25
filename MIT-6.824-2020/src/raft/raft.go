@@ -135,12 +135,15 @@ func (rf *Raft) toBeLeader(){
 	for i := 0; i <= rf.lastLogIndex; i++{
 		rf.logPersistRecord = append(rf.logPersistRecord, 1)
 	}
-	// 初始化对其他 raft 节点的数据
+	// 所有节点默认追加日志都从当前节点日志开始
 	for i := 0; i < len(rf.peers); i++ {
 		if i != rf.me {
-			// 所有节点默认追加日志都从当前节点日志开始
 			rf.nextIndex[i] = rf.lastLogIndex + 1
-			// 开启协程,给其他 raft 节点发送心跳
+		}
+	}
+	// 开启协程,给其他 raft 节点发送心跳
+	for i := 0; i < len(rf.peers); i++ {
+		if i != rf.me {
 			go rf.toSendHeartbeat(rf.currTerm, i)
 		}
 	}
@@ -254,24 +257,24 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 				}
 				args.Entries = rf.logBuff[rf.nextIndex[raftId]:end]
 			}
-			/* 趁着发送消息的间隙,解锁,看看这时候有没有事件发生 */
 			rf.mu.Unlock()
 			reply := HeartbeatReply{}
 			isCalled := rf.sendHeartbeat(raftId, &args, &reply)
 			rf.mu.Lock()
-			/* 看一下投票请求过程中是否有事件发生,如若状态发生改变,则退出。*/
+			// 检查当前节点状态是否正确
 			if rf.raftStatus != RaftLeader || rf.currTerm != CurrTerm {
 				break
 			}
-			/* 如若调用失败 */
+			// 如若调用失败
 			if !isCalled {
 				continue
 			}
-			/* 对返回的结果进行检验 */
+			// 对返回的结果进行检验
 			if reply.Replyer != raftId {
 				continue
 			}
-			/* 正常地发送了此次的心跳 */
+			// 对任期进行处理
+			// 如若发现存在任期大于自己的,立马更新任期成为追随者
 			if reply.CurrTerm > rf.currTerm {
 				rf.toBeFollower(reply.CurrTerm, NOVOTEFOR, NOLEADER)
 				break
@@ -280,7 +283,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 			if !reply.ReplyStatus {
 				isMatch = false
 				rf.nextIndex[raftId] = reply.LastIndex + 1
-			}else {
+			} else {
 				isMatch = true
 				/* 如若发送了日志 */
 				if len(args.Entries) > 0 {
