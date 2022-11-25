@@ -64,21 +64,19 @@ type LogEntries struct {
 }
 
 type Raft struct {
-	// raft rpc
-	peers     []*labrpc.ClientEnd 	// RPC所有对等点的端点,依赖该属性进行rpc通信。
-	me        int                 	// 当前节点编号
-	// 持久化
-	persister *Persister          	// 持久化对象
-	// 日志应用句柄
-	applyCh   chan ApplyMsg		  	// 发送到服务器..
-
-
 	/*** 通用数据 ***/
 	// 状态
 	mu        sync.Mutex          	// 状态锁
 	raftStatus ERaftStatus			// 当前 raft 节点的状态
 	currTerm int					// 当前选举任期数,需要持久化
 	dead      int32               	// set by Kill() 服务器是否死亡...4字节简单数据,赋值不需要加锁
+	// raft rpc
+	peers     []*labrpc.ClientEnd 	// RPC所有对等点的端点,依赖该属性进行rpc通信。
+	me        int                 	// 当前节点编号
+	// 状态持久化
+	persister *Persister          	// 状态持久化对象
+	// 日志持久化
+	applyCh   chan ApplyMsg		  	// 日志持久化对象
 	// 日志
 	logBuff []LogEntries			// 日志缓存,内含日志条目与日志产生的任期
 	lastLogIndex int 				// 上一条日志的索引
