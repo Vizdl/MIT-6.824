@@ -305,10 +305,15 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 				rf.toBeFollower(reply.CurrTerm, NOVOTEFOR, NOLEADER)
 				goto end
 			}
-			// 如若不是追随者状态则等待一下后续再发心跳
-			if reply.RaftStatus != RaftFollower {
-				continue
+			// 如若对方任期小于自己,等待对方更新任期后再发送新的心跳
+			if reply.CurrTerm < rf.currTerm {
+				break
 			}
+			// 如若不是追随者状态,等待对方更新状态后再发送新的心跳
+			if reply.RaftStatus != RaftFollower {
+				break
+			}
+			// 处理符合标准的回复
 			if !reply.ReplyStatus {
 				isMatch = false
 				rf.logMonitor.setNextIndex(raftId, reply.LastIndex + 1)
@@ -371,6 +376,11 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 		fmt.Println("第 ",rf.me," 台服务器作为追随者关闭定时器异常,表示心跳超时已经发生了")
 		return
 	}
+	// 如若对方任期大于自己,则需要等心跳计时器关闭后转换状态
+	if args.CurrTerm > rf.currTerm {
+		rf.toBeFollower(args.CurrTerm, args.Sender, args.Sender)
+		return
+	}
 	// args.PrevIndex <= rf.logIndex 是考虑到 对方比我方日志更少
 	logIndex := rf.getLastLogIndex()
 	reply.ReplyStatus = args.PrevIndex <= logIndex && args.PrevTerm ==  rf.logBuff[args.PrevIndex].Term
@@ -402,10 +412,6 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 		}
 	}
 	rf.submitCommitLog()
-	if args.CurrTerm > rf.currTerm {
-		rf.toBeFollower(args.CurrTerm, args.Sender, args.Sender)
-		return
-	}
 	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
 	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 }
