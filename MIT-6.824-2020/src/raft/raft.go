@@ -31,7 +31,7 @@ const MINVOTETIMEOUT int64 = 150000000
 // 投票超时随机数
 const VOTETIMEOUTTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
 // 发送心跳请求的频率
-const HEARTBEATTIMEOUT int64 = 50000000
+const HEARTBEATTIMEOUT int64 = 100000000
 // 一次性传输日志的最大数
 const ONEMAXLOGCOUNT int = 1
 
@@ -523,11 +523,9 @@ func (rf *Raft) asLeaderProcRequestVote(args *RequestVoteArgs, reply *RequestVot
 
 // return currentTerm and whether this server
 // believes it is the leader.
-// 返回 本届任期 和 该服务器是否认为自己是leader。
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	// Your code here (2A).
 	return rf.currTerm, rf.currLeader == rf.me
 }
 
@@ -709,7 +707,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.lastLogIndex++
 	}
 	rf.StartLog(command, isSucceed)
-	return rf.lastLogIndex, rf.currLeader, isSucceed
+	return rf.lastLogIndex, rf.currTerm, isSucceed
 }
 
 func (rf *Raft) Kill() {

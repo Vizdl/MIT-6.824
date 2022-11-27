@@ -273,16 +273,18 @@ loop:
 			// give solution some time to settle
 			time.Sleep(3 * time.Second)
 		}
-
+		// 找到 leader 并提交日志
 		leader := cfg.checkOneLeader()
 		_, term, ok := cfg.rafts[leader].Start(1)
+		// 如若提交失败,则继续尝试
 		if !ok {
 			// leader moved on really quickly
 			continue
 		}
-
+		// 多线程提交日志
 		iters := 5
 		var wg sync.WaitGroup
+		// 控制管道
 		is := make(chan int, iters)
 		for ii := 0; ii < iters; ii++ {
 			wg.Add(1)
