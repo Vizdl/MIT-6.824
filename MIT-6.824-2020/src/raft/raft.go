@@ -1,21 +1,15 @@
 package raft
 
-/*
-ApplyMsg
-每次一个新条目被提交到日志中时，每个筏对等点
-应该向服务(或测试人员)发送ApplyMsg
-在同一服务器上。
-*/
 import (
 	"bytes"
 	"fmt"
 	"labgob"
+	"labrpc"
 	"log"
 	"math/rand"
 	"sync"
 	"time"
 )
-import "labrpc"
 
 // raft 节点状态
 type ERaftStatus int32
@@ -335,7 +329,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 
 func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatReply) {
 	// 请求参数校验
-	if rf.currLeader != NOLEADER && args.CurrTerm == rf.currTerm && args.Sender != rf.currLeader{
+	if rf.currLeader != NOLEADER && args.CurrTerm == rf.currTerm && args.Sender != rf.currLeader {
 		log.Fatal("第 ",rf.me," 台服务器在第 ",rf.currTerm," 届收到心跳包,但领导应该是 ",rf.currLeader," 却收到 ",args.Sender," 发送的心跳包")
 		return
 	}
@@ -352,25 +346,25 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 		fmt.Println("第 ",rf.me," 台服务器作为追随者关闭定时器异常,表示心跳超时已经发生了")
 		return
 	}
-	/* args.PrevIndex <= rf.lastLogIndex 是考虑到 对方比我方日志更少 */
+	// args.PrevIndex <= rf.lastLogIndex 是考虑到 对方比我方日志更少
 	reply.ReplyStatus = args.PrevIndex <= rf.lastLogIndex && args.PrevTerm ==  rf.logBuff[args.PrevIndex].Term
-	/* 如若找到最后一条相同日志 */
+	// 如若找到最后一条相同日志
 	if reply.ReplyStatus {
-		/* 删除无用日志 */
+		// 删除无用日志
 		if args.PrevIndex < rf.lastLogIndex {
 			rf.logBuff = rf.logBuff[:args.PrevIndex + 1]
 			rf.lastLogIndex = args.PrevIndex
 			rf.lastLogTerm = rf.logBuff[rf.lastLogIndex].Term
 		}
-		/* 追加日志 */
+		// 追加日志
 		if len(args.Entries) > 0 {
 			rf.logBuff = append(rf.logBuff, args.Entries...)
 			rf.lastLogIndex += len(args.Entries)
 			rf.lastLogTerm = args.Entries[len(args.Entries) - 1].Term
 		}
-		/* 更新日志提交索引 */
-		if args.CommitIndex > rf.commitIndex{
-			/* 需要考虑匹配上的日志数量少于提交数量的情况 */
+		// 更新日志提交索引
+		if args.CommitIndex > rf.commitIndex {
+			// 需要考虑匹配上的日志数量少于提交数量的情况
 			if args.CommitIndex <= rf.lastLogIndex {
 				rf.commitIndex = args.CommitIndex
 			}else {
@@ -385,7 +379,7 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 		}
 	}
 	flag := false
-	/* 向k/v服务器发送已提交未应用的消息 */
+	// 向k/v服务器发送已提交未应用的消息
 	for i := rf.lastApplied + 1; i <= rf.commitIndex && i < len(rf.logBuff); i++{
 		applyMsg := ApplyMsg {
 			CommandValid : true,
@@ -397,7 +391,7 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 		rf.commitLog(applyMsg)
 		flag = true
 	}
-	/* 发生变动了,持久化 */
+	// 发生变动了,持久化
 	if flag {
 		rf.persist()
 	}
@@ -584,8 +578,8 @@ func (rf *Raft) readPersist(data []byte) {
 
 
 type HeartbeatArgs struct{
-	Sender 		int
-	CurrTerm 	int
+	Sender 		int				// 发送者
+	CurrTerm 	int				// 当前任期
 	PrevIndex 	int 			// 上一次的索引
 	PrevTerm 	int 			// 上一次的任期
 	Entries 	[]LogEntries  	// 日志条目
