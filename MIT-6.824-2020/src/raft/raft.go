@@ -291,22 +291,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 							}
 						}
 					}
-					flag := false
-					/* 将已提交但未应用的日志应用到 k/v 服务器 */
-					for i := rf.appliedIndex + 1; i <= rf.commitIndex; i++{
-						applyMsg := ApplyMsg {
-							CommandValid : true,
-							Command : rf.logBuff[i].Command,
-							CommandIndex : i,
-						}
-						rf.applyCh <- applyMsg
-						rf.appliedIndex++
-						rf.commitLog(applyMsg)
-						flag = true
-					}
-					if flag{
-						rf.persist()
-					}
+					rf.submitCommitLog()
 					rf.logMonitor.setNextIndex(raftId, nextIndex + len(args.Entries))
 				}
 			}
@@ -320,6 +305,21 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 		}
 		rf.mu.Lock()
 	}
+}
+
+func (rf *Raft) submitCommitLog () {
+	// 向k/v服务器发送已提交未应用的消息
+	for i := rf.appliedIndex + 1; i <= rf.commitIndex; i++{
+		applyMsg := ApplyMsg {
+			CommandValid : true,
+			Command : rf.logBuff[i].Command,
+			CommandIndex : i,
+		}
+		rf.applyCh <- applyMsg
+		rf.appliedIndex++
+		rf.commitLog(applyMsg)
+	}
+	rf.persist()
 }
 
 func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatReply) {
@@ -373,23 +373,7 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 			reply.LastIndex = args.PrevIndex - 1
 		}
 	}
-	flag := false
-	// 向k/v服务器发送已提交未应用的消息
-	for i := rf.appliedIndex + 1; i <= rf.commitIndex; i++{
-		applyMsg := ApplyMsg {
-			CommandValid : true,
-			Command : rf.logBuff[i].Command,
-			CommandIndex : i,
-		}
-		rf.applyCh <- applyMsg
-		rf.appliedIndex++
-		rf.commitLog(applyMsg)
-		flag = true
-	}
-	// 发生变动了,持久化
-	if flag {
-		rf.persist()
-	}
+	rf.submitCommitLog()
 	if args.CurrTerm > rf.currTerm {
 		rf.toBeFollower(args.CurrTerm, args.Sender, args.Sender)
 		return
