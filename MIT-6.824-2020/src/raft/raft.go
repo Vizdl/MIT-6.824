@@ -88,6 +88,31 @@ type Raft struct {
 	logMonitor LogMonitor			// 日志监控工具
 }
 
+//
+// 获得成为领导者的资格
+//
+func (rf *Raft) qualifyLeader() bool {
+	return rf.acquiredVote >= uint(len(rf.peers)) / 2 + 1
+}
+
+//
+// 提交未应用的日志
+//
+func (rf *Raft) submitCommitLog () {
+	// 向k/v服务器发送已提交未应用的消息
+	for i := rf.appliedIndex + 1; i <= rf.commitIndex; i++{
+		applyMsg := ApplyMsg {
+			CommandValid : true,
+			Command : rf.logBuff[i].Command,
+			CommandIndex : i,
+		}
+		rf.applyCh <- applyMsg
+		rf.appliedIndex++
+		rf.commitLog(applyMsg)
+	}
+	rf.persist()
+}
+
 // 转换为追随者
 func (rf *Raft) toBeFollower (currTerm int, voteFor int, currLeader int){
 	// 初始化数据
@@ -166,13 +191,6 @@ func (rf *Raft) heartTimeoutEventProc() {
 	rf.heartTimeoutEventProcLog()
 }
 
-//
-// 获得成为领导者的资格
-//
-func (rf *Raft) qualifyLeader() bool {
-	return rf.acquiredVote >= uint(len(rf.peers)) / 2 + 1
-}
-
 func (rf *Raft) toSendRequestVote(CurrTerm int, raftId int){
 	args := RequestVoteArgs{
 		Requester : rf.me,
@@ -237,7 +255,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 				PrevTerm: rf.logBuff[nextIndex - 1].Term,
 				CommitIndex: rf.commitIndex,
 			}
-			// 2. 填充日志
+			// 2. 填充日志 
 			if nextIndex <= rf.logIndex && isMatch {
 				end := len(rf.logBuff)
 				if end >= nextIndex + ONEMAXLOGCOUNT {
@@ -251,7 +269,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 			rf.mu.Lock()
 			// 检查当前节点状态是否正确
 			if rf.raftStatus != RaftLeader || rf.currTerm != CurrTerm {
-				break
+				goto end
 			}
 			// 如若调用失败
 			if !isCalled {
@@ -265,7 +283,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 			// 如若发现存在任期大于自己的,立马更新任期成为追随者
 			if reply.CurrTerm > rf.currTerm {
 				rf.toBeFollower(reply.CurrTerm, NOVOTEFOR, NOLEADER)
-				break
+				goto end
 			}
 			if !reply.ReplyStatus {
 				isMatch = false
@@ -305,21 +323,8 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 		}
 		rf.mu.Lock()
 	}
-}
-
-func (rf *Raft) submitCommitLog () {
-	// 向k/v服务器发送已提交未应用的消息
-	for i := rf.appliedIndex + 1; i <= rf.commitIndex; i++{
-		applyMsg := ApplyMsg {
-			CommandValid : true,
-			Command : rf.logBuff[i].Command,
-			CommandIndex : i,
-		}
-		rf.applyCh <- applyMsg
-		rf.appliedIndex++
-		rf.commitLog(applyMsg)
-	}
-	rf.persist()
+end:
+	return
 }
 
 func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatReply) {
