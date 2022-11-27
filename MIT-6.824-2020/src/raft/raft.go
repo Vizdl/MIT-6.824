@@ -71,13 +71,13 @@ type Raft struct {
 	// 日志持久化
 	applyCh   chan ApplyMsg		  	// 日志持久化对象
 	// 日志
-	logBuff []LogEntries			// 日志缓存,内含日志条目与日志产生的任期
-	lastLogIndex int 				// 上一条日志的索引
-	lastLogTerm int 				// 上一条日志的任期
-	commitIndex int					// 当前节点已知的,最大的,已提交的日志索引
-	lastApplied int 				// 表示当前节点最后一条被应用到状态机的日志索引
+	logBuff      []LogEntries 		// 日志缓存,内含日志条目与日志产生的任期
+	logIndex     int          		// 最后一条已添加的日志索引
+	logTerm      int          		// 最后一条已添加的日志提交任期
+	commitIndex  int          		// 已提交的日志索引
+	appliedIndex int          		// 已应用的日志索引
 	/*** 追随者和候选者有效 ***/
-	voteFor	int						// 在当前选举任期是否已经投过了票,投给自己也算
+	voteFor	int						// 在当前选举任期票投给了谁
 	/*** 追随者有效 ***/
 	currLeader int					// 当前届领导者
 	heartbeatTimer *time.Timer 		// 心跳定时器
@@ -85,8 +85,7 @@ type Raft struct {
 	acquiredVote uint				// 在当前选举周期获得的票数
 	voteTimer *time.Timer 			// 选举定时器
 	/*** 领导者有效 ***/
-	nextIndex []int					// nextIndex[i] : ID 为 i 的 raft 下一条日志的索引的猜测值,用以同步日志
-	logPersistRecord []int			// logPersistRecord[i] : 第 i 条日志条目被 logPersistRecord[i] 台 raft 持久化,领导者用来统计当前任期内日志是否应该被提交
+	logMonitor LogMonitor			// 日志监控工具
 }
 
 // 转换为追随者
@@ -126,15 +125,7 @@ func (rf *Raft) toBeLeader(){
 	rf.currLeader = rf.me
 	rf.raftStatus = RaftLeader
 	// 日志持久化记录 初始化
-	for i := 0; i <= rf.lastLogIndex; i++{
-		rf.logPersistRecord = append(rf.logPersistRecord, 1)
-	}
-	// 所有节点默认追加日志都从当前节点日志开始
-	for i := 0; i < len(rf.peers); i++ {
-		if i != rf.me {
-			rf.nextIndex[i] = rf.lastLogIndex + 1
-		}
-	}
+	rf.logMonitor.init(rf.logIndex)
 	// 开启协程,给其他 raft 节点发送心跳
 	for i := 0; i < len(rf.peers); i++ {
 		if i != rf.me {
@@ -186,8 +177,8 @@ func (rf *Raft) toSendRequestVote(CurrTerm int, raftId int){
 	args := RequestVoteArgs{
 		Requester : rf.me,
 		CurrTerm : CurrTerm,
-		LastLogTerm : rf.lastLogTerm,
-		LastLogIndex: rf.lastLogIndex,
+		LastLogTerm : rf.logTerm,
+		LastLogIndex: rf.logIndex,
 		CommitIndex: rf.commitIndex,
 	}
 	rf.mu.Lock()
@@ -237,19 +228,22 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 		tick := time.Now().UnixNano()
 		if tick - lastTick >= HEARTBEATTIMEOUT {
 			lastTick = tick
+			// 1. 初始化心跳参数
+			nextIndex := rf.logMonitor.getNextIndex(raftId)
 			args := HeartbeatArgs{
 				Sender: rf.me,
-				CurrTerm: CurrTerm,
-				PrevIndex: rf.nextIndex[raftId] - 1,
-				PrevTerm: rf.logBuff[rf.nextIndex[raftId] - 1].Term,
+				CurrTerm: rf.currTerm,
+				PrevIndex: nextIndex - 1,
+				PrevTerm: rf.logBuff[nextIndex - 1].Term,
 				CommitIndex: rf.commitIndex,
 			}
-			if rf.nextIndex[raftId] <= rf.lastLogIndex && isMatch {
+			// 2. 填充日志
+			if nextIndex <= rf.logIndex && isMatch {
 				end := len(rf.logBuff)
-				if len(rf.logBuff) >= rf.nextIndex[raftId] + ONEMAXLOGCOUNT {
-					end = rf.nextIndex[raftId] + ONEMAXLOGCOUNT
+				if end >= nextIndex + ONEMAXLOGCOUNT {
+					end = nextIndex + ONEMAXLOGCOUNT
 				}
-				args.Entries = rf.logBuff[rf.nextIndex[raftId]:end]
+				args.Entries = rf.logBuff[nextIndex:end]
 			}
 			rf.mu.Unlock()
 			reply := HeartbeatReply{}
@@ -263,9 +257,9 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 			if !isCalled {
 				continue
 			}
-			// 对返回的结果进行检验
+			// 检查回复 raftid
 			if reply.Replyer != raftId {
-				continue
+				log.Fatal("发送心跳时回复的 raftid 错误")
 			}
 			// 对任期进行处理
 			// 如若发现存在任期大于自己的,立马更新任期成为追随者
@@ -273,46 +267,47 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 				rf.toBeFollower(reply.CurrTerm, NOVOTEFOR, NOLEADER)
 				break
 			}
-			// 如若匹配失败
 			if !reply.ReplyStatus {
 				isMatch = false
-				rf.nextIndex[raftId] = reply.LastIndex + 1
+				rf.logMonitor.setNextIndex(raftId, reply.LastIndex + 1)
 			} else {
-				isMatch = true
-				/* 如若发送了日志 */
-				if len(args.Entries) > 0 {
+				// 如若第一次匹配到 : 没有发送日志
+				if !isMatch {
+					for i := 1; i <= args.PrevIndex; i++{
+						rf.logMonitor.logPersistRecordInc(i)
+					}
+					isMatch = true
+				}else {
+					nextIndex = rf.logMonitor.getNextIndex(raftId)
 					/* 更新 logPersistRecord 和 commitIndex */
 					for i := 0; i < len(args.Entries); i++ {
 						if args.Entries[i].Term == rf.currTerm {
-							rf.logPersistRecord[rf.nextIndex[raftId] + i]++
-							if rf.logPersistRecord[rf.nextIndex[raftId] + i] >= len(rf.peers) / 2 + 1{
-								if rf.commitIndex < rf.nextIndex[raftId] + i{
-									rf.commitIndex = rf.nextIndex[raftId]
+							rf.logMonitor.logPersistRecordInc(nextIndex + i)
+							// 如若超出一半拥有该日志
+							if rf.logMonitor.logPersistRecordCanCommit(nextIndex + i) {
+								if rf.commitIndex < nextIndex + i{
+									rf.commitIndex = nextIndex
 								}
 							}
 						}
 					}
 					flag := false
 					/* 将已提交但未应用的日志应用到 k/v 服务器 */
-					for i := rf.lastApplied + 1; i <= rf.commitIndex; i++{
+					for i := rf.appliedIndex + 1; i <= rf.commitIndex; i++{
 						applyMsg := ApplyMsg {
 							CommandValid : true,
 							Command : rf.logBuff[i].Command,
 							CommandIndex : i,
 						}
 						rf.applyCh <- applyMsg
-						rf.lastApplied++
+						rf.appliedIndex++
 						rf.commitLog(applyMsg)
 						flag = true
 					}
 					if flag{
 						rf.persist()
 					}
-					rf.nextIndex[raftId] += len(args.Entries)
-				}else {
-					for i := 1; i <= args.PrevIndex; i++{
-						rf.logPersistRecord[i]++
-					}
+					rf.logMonitor.setNextIndex(raftId, nextIndex + len(args.Entries))
 				}
 			}
 		}
@@ -346,48 +341,48 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 		fmt.Println("第 ",rf.me," 台服务器作为追随者关闭定时器异常,表示心跳超时已经发生了")
 		return
 	}
-	// args.PrevIndex <= rf.lastLogIndex 是考虑到 对方比我方日志更少
-	reply.ReplyStatus = args.PrevIndex <= rf.lastLogIndex && args.PrevTerm ==  rf.logBuff[args.PrevIndex].Term
+	// args.PrevIndex <= rf.logIndex 是考虑到 对方比我方日志更少
+	reply.ReplyStatus = args.PrevIndex <= rf.logIndex && args.PrevTerm ==  rf.logBuff[args.PrevIndex].Term
 	// 如若找到最后一条相同日志
 	if reply.ReplyStatus {
 		// 删除无用日志
-		if args.PrevIndex < rf.lastLogIndex {
+		if args.PrevIndex < rf.logIndex {
 			rf.logBuff = rf.logBuff[:args.PrevIndex + 1]
-			rf.lastLogIndex = args.PrevIndex
-			rf.lastLogTerm = rf.logBuff[rf.lastLogIndex].Term
+			rf.logIndex = args.PrevIndex
+			rf.logTerm = rf.logBuff[rf.logIndex].Term
 		}
 		// 追加日志
 		if len(args.Entries) > 0 {
 			rf.logBuff = append(rf.logBuff, args.Entries...)
-			rf.lastLogIndex += len(args.Entries)
-			rf.lastLogTerm = args.Entries[len(args.Entries) - 1].Term
+			rf.logIndex += len(args.Entries)
+			rf.logTerm = args.Entries[len(args.Entries) - 1].Term
 		}
 		// 更新日志提交索引
 		if args.CommitIndex > rf.commitIndex {
 			// 需要考虑匹配上的日志数量少于提交数量的情况
-			if args.CommitIndex <= rf.lastLogIndex {
+			if args.CommitIndex <= rf.logIndex {
 				rf.commitIndex = args.CommitIndex
 			}else {
-				rf.commitIndex = rf.lastLogIndex
+				rf.commitIndex = rf.logIndex
 			}
 		}
 	}else {
-		if args.PrevIndex > rf.lastLogIndex {
-			reply.LastIndex = rf.lastLogIndex
+		if args.PrevIndex > rf.logIndex {
+			reply.LastIndex = rf.logIndex
 		}else {
 			reply.LastIndex = args.PrevIndex - 1
 		}
 	}
 	flag := false
 	// 向k/v服务器发送已提交未应用的消息
-	for i := rf.lastApplied + 1; i <= rf.commitIndex && i < len(rf.logBuff); i++{
+	for i := rf.appliedIndex + 1; i <= rf.commitIndex; i++{
 		applyMsg := ApplyMsg {
 			CommandValid : true,
 			Command : rf.logBuff[i].Command,
 			CommandIndex : i,
 		}
 		rf.applyCh <- applyMsg
-		rf.lastApplied++
+		rf.appliedIndex++
 		rf.commitLog(applyMsg)
 		flag = true
 	}
@@ -415,10 +410,10 @@ func (rf *Raft) asCandidateProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatR
 		fmt.Println("第",rf.me,"台服务器作为候选者关闭定时器异常")
 		return
 	}
-	reply.ReplyStatus = args.PrevIndex == rf.lastLogIndex && args.PrevTerm ==  rf.lastLogTerm
+	reply.ReplyStatus = args.PrevIndex == rf.logIndex && args.PrevTerm ==  rf.logTerm
 	if !reply.ReplyStatus {
-		if args.PrevIndex > rf.lastLogIndex {
-			reply.LastIndex = rf.lastLogIndex
+		if args.PrevIndex > rf.logIndex {
+			reply.LastIndex = rf.logIndex
 		}else {
 			reply.LastIndex = args.PrevIndex - 1
 		}
@@ -440,10 +435,10 @@ func (rf *Raft) asLeaderProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRepl
 	if args.CurrTerm < rf.currTerm {
 		return
 	}
-	reply.ReplyStatus = args.PrevIndex == rf.lastLogIndex && args.PrevTerm ==  rf.lastLogTerm
+	reply.ReplyStatus = args.PrevIndex == rf.logIndex && args.PrevTerm ==  rf.logTerm
 	if !reply.ReplyStatus {
-		if args.PrevIndex > rf.lastLogIndex {
-			reply.LastIndex = rf.lastLogIndex
+		if args.PrevIndex > rf.logIndex {
+			reply.LastIndex = rf.logIndex
 		}else {
 			reply.LastIndex = args.PrevIndex - 1
 		}
@@ -477,7 +472,7 @@ func (rf *Raft) asFollowerProcRequestVote (args *RequestVoteArgs, reply *Request
 	}
 	reply.CurrTerm = rf.currTerm
 	// 选举限制
-	if args.CommitIndex > rf.commitIndex || (args.CommitIndex == rf.commitIndex && (args.LastLogIndex >= rf.lastLogIndex && args.LastLogTerm >= rf.lastLogTerm)) {
+	if args.CommitIndex > rf.commitIndex || (args.CommitIndex == rf.commitIndex && (args.LastLogIndex >= rf.logIndex && args.LastLogTerm >= rf.logTerm)) {
 		reply.ReplyStatus = true
 		rf.voteFor = args.Requester
 	}
@@ -539,7 +534,7 @@ func (rf *Raft) persist() {
 	e.Encode(rf.currTerm)
 	e.Encode(rf.voteFor)
 	e.Encode(rf.commitIndex)
-	e.Encode(rf.lastApplied)
+	e.Encode(rf.appliedIndex)
 	e.Encode(rf.logBuff)
 	data := w.Bytes()
 	rf.persister.SaveRaftState(data)
@@ -567,10 +562,10 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.currTerm = currTerm
 		rf.voteFor = voteFor
 		rf.commitIndex = commitIndex
-		rf.lastApplied = lastApplied
+		rf.appliedIndex = lastApplied
 		rf.logBuff = logBuff
-		rf.lastLogIndex = len(logBuff) - 1
-		rf.lastLogTerm = rf.logBuff[rf.lastLogIndex].Term
+		rf.logIndex = len(logBuff) - 1
+		rf.logTerm = rf.logBuff[rf.logIndex].Term
 	}
 }
 
@@ -591,11 +586,8 @@ type HeartbeatReply struct{
 	LastIndex 	int		// 当前匹配的索引
 }
 //
-// example RequestVote RPC arguments structure.
-// field names must start with capital letters!
+// 投票请求参数
 //
-// RequestVote RPC参数结构示例。
-// 字段名称必须以大写字母开头!
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
 	Requester 	int // 请求者
@@ -703,11 +695,11 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Term : rf.currTerm,
 		}
 		rf.logBuff = append(rf.logBuff, le)
-		rf.logPersistRecord = append(rf.logPersistRecord, 1)
-		rf.lastLogIndex++
+		rf.logMonitor.logPersistRecordAppend()
+		rf.logIndex++
 	}
 	rf.StartLog(command, isSucceed)
-	return rf.lastLogIndex, rf.currTerm, isSucceed
+	return rf.logIndex, rf.currTerm, isSucceed
 }
 
 func (rf *Raft) Kill() {
@@ -764,28 +756,26 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	rf := &Raft{
 		peers : peers,
 		persister : persister,
-		applyCh : applyCh,
-		me : me,
-		raftStatus : RaftFollower,
-		currTerm : 1, /* 任期初始化为1 */
-		voteFor : NOVOTEFOR,
-		acquiredVote : 0,
-		currLeader : NOLEADER,
+		applyCh :        applyCh,
+		me :             me,
+		raftStatus :     RaftFollower,
+		currTerm :       1, /* 任期初始化为1 */
+		voteFor :        NOVOTEFOR,
+		acquiredVote :   0,
+		currLeader :     NOLEADER,
 		heartbeatTimer : nil,
-		voteTimer : nil,
-		commitIndex : 0,
-		lastApplied : 0,
-		lastLogIndex : 0, /* 日志索引从1开始,所以初始化为0 */
-		lastLogTerm : 0,
-		nextIndex : make([]int, len(peers)),
+		voteTimer :      nil,
+		commitIndex :    0,
+		appliedIndex:    0,
+		logIndex:        0, /* 日志索引从1开始,所以初始化为0 */
+		logTerm:         0,
 	}
 	le := LogEntries{
 		Command: 0,
 		Term : 0,
 	}
 	rf.logBuff = append(rf.logBuff, le)
-	rf.logPersistRecord = append(rf.logPersistRecord, len(rf.peers))
-
+	rf.logMonitor.NewLogMonitor(len(rf.peers))
 	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
 	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 	// 恢复数据
