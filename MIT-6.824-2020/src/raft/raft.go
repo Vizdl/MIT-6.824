@@ -31,7 +31,7 @@ const MINVOTETIMEOUT int64 = 150000000
 // 投票超时随机数
 const VOTETIMEOUTTIMEOUTSECTIONSIZE int64 = 200000000 // 如若为负数会报错
 // 发送心跳请求的频率
-const HEARTBEATTIMEOUT int64 = 100000000
+const HEARTBEATTIMEOUT int64 = 50000000	// 如若太慢了会导致日志同步过慢
 // 一次性传输日志的最大数
 const ONEMAXLOGCOUNT int = 1
 
