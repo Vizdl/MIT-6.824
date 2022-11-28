@@ -6,13 +6,10 @@ type LogMonitor struct {
 	logPersistRecord []int			// logPersistRecord[i] : 第 i 条日志条目被 logPersistRecord[i] 台 raft 持久化,领导者用来统计当前任期内日志是否应该被提交
 }
 
-func (lm *LogMonitor) NewLogMonitor(peers int) {
+func (lm *LogMonitor) init (peers int, logIndex int) {
 	lm.peers = peers
 	lm.nextIndex = make([]int, peers)
 	lm.logPersistRecord = append(lm.logPersistRecord, peers)
-}
-
-func (lm *LogMonitor) init (logIndex int) {
 	for i := 0; i <= logIndex; i++{
 		lm.logPersistRecord = append(lm.logPersistRecord, 1)
 	}

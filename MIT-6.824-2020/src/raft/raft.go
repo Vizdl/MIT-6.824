@@ -123,7 +123,7 @@ func (rf *Raft) toBeLeader(){
 	rf.currLeader = rf.me
 	rf.raftStatus = RaftLeader
 	// 日志持久化记录 初始化
-	rf.logMonitor.init(rf.logManager.getLastLogIndex())
+	rf.logMonitor.init(len(rf.peers), rf.logManager.getLastLogIndex())
 	// 开启协程,给其他 raft 节点发送心跳
 	for i := 0; i < len(rf.peers); i++ {
 		if i != rf.me {
@@ -717,7 +717,6 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 		voteTimer :      nil,
 	}
 	rf.logManager.init()
-	rf.logMonitor.NewLogMonitor(len(rf.peers))
 	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
 	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 	// 恢复数据
