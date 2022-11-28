@@ -98,7 +98,6 @@ func (lm *LogManager) submitCommitLog (applyCh chan ApplyMsg) {
 		//rf.commitLog(applyMsg)
 		lm.appliedIndex++
 	}
-	//rf.persist()
 }
 
 func (lm *LogManager) logAppend (command interface{}, term int) {
@@ -132,4 +131,34 @@ func (lm *LogManager) logCutToEnd (begin int) {
 
 func (lm *LogManager) logCut (begin int, end int) {
 	lm.logBuff = lm.logBuff[begin:end]
+}
+
+func (lm *LogManager) logSyncPorc (commitIndex int, prevIndex int, prevTerm int, logEntries []LogEntries) (bool, int){
+	// args.PrevIndex <= rf.logIndex 是考虑到 对方比我方日志更少
+	logIndex := lm.getLastLogIndex()
+	// 如若找到最后一条相同日志
+	if prevIndex <= logIndex && prevTerm ==  lm.getLogTerm(prevIndex) {
+		// 删除无用日志
+		if prevIndex < logIndex {
+			lm.logBuff = lm.logBuff[:prevIndex + 1]
+		}
+		// 追加日志
+		if len(logEntries) > 0 {
+			lm.logBuff = append(lm.logBuff, logEntries...)
+		}
+		// 更新日志提交索引
+		if commitIndex > lm.getCommitIndex() {
+			logIndex = lm.getLastLogIndex()
+			lm.commitIndex = logIndex
+			// 需要考虑匹配上的日志数量少于提交数量的情况
+			if commitIndex <= logIndex {
+				lm.commitIndex = commitIndex
+			}
+		}
+		return true, 0
+	}
+	if prevIndex > logIndex {
+		return false, logIndex
+	}
+	return false, prevIndex - 1
 }

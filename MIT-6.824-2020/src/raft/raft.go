@@ -345,36 +345,7 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 		rf.toBeFollower(args.CurrTerm, args.Sender, args.Sender)
 		return
 	}
-	// args.PrevIndex <= rf.logIndex 是考虑到 对方比我方日志更少
-	logIndex := rf.logManager.getLastLogIndex()
-	reply.ReplyStatus = args.PrevIndex <= logIndex && args.PrevTerm ==  rf.logManager.getLogTerm(args.PrevIndex)
-	// 如若找到最后一条相同日志
-	if reply.ReplyStatus {
-		// 删除无用日志
-		if args.PrevIndex < logIndex {
-			rf.logManager.logCutFormBegin(args.PrevIndex + 1)
-		}
-		// 追加日志
-		if len(args.Entries) > 0 {
-			rf.logManager.logAppendArrays(args.Entries)
-		}
-		// 更新日志提交索引
-		if args.CommitIndex > rf.logManager.getCommitIndex() {
-			logIndex = rf.logManager.getLastLogIndex()
-			// 需要考虑匹配上的日志数量少于提交数量的情况
-			if args.CommitIndex <= logIndex {
-				rf.logManager.setCommitIndex(args.CommitIndex)
-			}else {
-				rf.logManager.setCommitIndex(logIndex)
-			}
-		}
-	}else {
-		if args.PrevIndex > logIndex {
-			reply.LastIndex = logIndex
-		}else {
-			reply.LastIndex = args.PrevIndex - 1
-		}
-	}
+	reply.ReplyStatus, reply.LastIndex = rf.logManager.logSyncPorc(args.CommitIndex, args.PrevIndex, args.PrevTerm, args.Entries)
 	rf.logManager.submitCommitLog(rf.applyCh)
 	rf.persist()
 	rf.startHeartbeatTimer()
@@ -586,7 +557,6 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 }
 
-
 type HeartbeatArgs struct{
 	Sender 		int				// 发送者
 	CurrTerm 	int				// 当前任期
@@ -676,7 +646,6 @@ func (rf *Raft) RequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.RequestVoteLog(CurrTerm, raftStatus, args, reply)
 }
 
-// 向编号为i的服务器发送投票消息
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	rf.sendRequestVoteLog(server, args, reply)
