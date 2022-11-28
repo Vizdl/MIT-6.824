@@ -79,10 +79,28 @@ type Raft struct {
 	logMonitor LogMonitor			// 日志监控工具
 }
 
+func (rf *Raft) startHeartbeatTimer() {
+	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
+	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
+}
+
+func (rf *Raft) stopHeartbeatTimer() bool {
+	return rf.heartbeatTimer != nil && rf.heartbeatTimer.Stop()
+}
+
+func (rf *Raft) startVoteTimer() {
+	limit := time.Duration(MINVOTETIMEOUT + rand.Int63n(VOTETIMEOUTTIMEOUTSECTIONSIZE))
+	rf.voteTimer = time.AfterFunc(limit, rf.voteTimeoutEventProc) // 开启选举超时
+}
+
+func (rf *Raft) stopVoteTimer() bool {
+	return rf.voteTimer != nil && rf.voteTimer.Stop()
+}
+
 //
 // 获得成为领导者的资格
 //
-func (rf *Raft) qualifyLeader() bool {
+func (rf *Raft) willToBeLeader() bool {
 	return rf.acquiredVote >= uint(len(rf.peers)) / 2 + 1
 }
 
@@ -96,8 +114,7 @@ func (rf *Raft) toBeFollower (currTerm int, voteFor int, currLeader int){
 	// 持久化
 	rf.persist()
 	// 开启心跳定时器
-	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
-	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
+	rf.startHeartbeatTimer()
 }
 
 // 转换为候选者
@@ -107,14 +124,14 @@ func (rf *Raft) toBeCandidate(){
 	rf.voteFor = rf.me
 	rf.currLeader = NOLEADER
 	rf.raftStatus = RaftCandidate
-	limit := time.Duration(MINVOTETIMEOUT + rand.Int63n(VOTETIMEOUTTIMEOUTSECTIONSIZE))
-	rf.voteTimer = time.AfterFunc(limit, rf.voteTimeoutEventProc) // 开启选举超时
 	// 开启协程,给其他 raft 节点发送投票请求
 	for i := 0; i < len(rf.peers); i++{
 		if rf.me != i {
 			go rf.toSendRequestVote(rf.currTerm, i)
 		}
 	}
+	// 开启选举超时定时器
+	rf.startVoteTimer()
 }
 
 // 转换为领导者
@@ -198,8 +215,8 @@ func (rf *Raft) toSendRequestVote(CurrTerm int, raftId int){
 		// 如若对方任期大于等于自己,则按照对方的应答判断是否获得票
 		if reply.ReplyStatus {
 			rf.acquiredVote++
-			if rf.qualifyLeader() {
-				if rf.voteTimer != nil && rf.voteTimer.Stop() {
+			if rf.willToBeLeader() {
+				if rf.stopVoteTimer() {
 					rf.toBeLeader()
 				}
 			}
@@ -325,8 +342,7 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 	if args.CurrTerm < rf.currTerm {
 		return
 	}
-	// 关闭心跳,如若心跳事件已经发生,拒绝所有当前心跳包,等待状态转换。
-	if rf.heartbeatTimer == nil || !rf.heartbeatTimer.Stop() {
+	if !rf.stopHeartbeatTimer() {
 		fmt.Println("第 ",rf.me," 台服务器作为追随者关闭定时器异常,表示心跳超时已经发生了")
 		return
 	}
@@ -367,8 +383,7 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 	}
 	rf.logManager.submitCommitLog(rf.applyCh)
 	rf.persist()
-	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
-	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
+	rf.startHeartbeatTimer()
 }
 
 func (rf *Raft) asCandidateProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatReply) {
@@ -379,8 +394,7 @@ func (rf *Raft) asCandidateProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatR
 	if args.CurrTerm < rf.currTerm {
 		return
 	}
-	// 如若之前候选计时器开着,则先关闭
-	if rf.voteTimer != nil && !rf.voteTimer.Stop(){
+	if !rf.stopVoteTimer() {
 		fmt.Println("第",rf.me,"台服务器作为候选者关闭定时器异常")
 		return
 	}
@@ -416,8 +430,7 @@ func (rf *Raft) asFollowerProcRequestVote (args *RequestVoteArgs, reply *Request
 		return
 	}
 	if args.CurrTerm > rf.currTerm {
-		// 如若关闭定时器失败,说明超时事件已经发生,那么直接拒绝
-		if rf.heartbeatTimer != nil && !rf.heartbeatTimer.Stop() {
+		if !rf.stopHeartbeatTimer() {
 			fmt.Println("第",rf.me,"台服务器作为追随者关闭定时器异常")
 			return
 		}
@@ -450,8 +463,7 @@ func (rf *Raft) asCandidateProcRequestVote (args *RequestVoteArgs, reply *Reques
 		return
 	}
 	// 对方任期数大于我
-	// 如若已经候选定时器超时,则返回 false,等待超时
-	if rf.voteTimer != nil && !rf.voteTimer.Stop(){
+	if !rf.stopVoteTimer() {
 		fmt.Println("第",rf.me,"台服务器作为候选者关闭定时器异常")
 		return
 	}
@@ -642,7 +654,6 @@ func (rf *Raft) sendHeartbeat(server int, args *HeartbeatArgs, reply *HeartbeatR
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	// Your code here (2B).
 	isSucceed := rf.me == rf.currLeader
 	if isSucceed {
 		rf.logManager.logAppend(command, rf.currTerm)
@@ -655,18 +666,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	rf.mu.Lock()
 	if rf.raftStatus == RaftFollower {
-		if rf.heartbeatTimer != nil{
-			if rf.heartbeatTimer.Stop() { // 尝试去关闭定时器,如若成功,那么表示超时事件未发生。
-				rf.heartbeatTimer = nil
-			}
-		}
+		rf.stopHeartbeatTimer()
 	}
 	if rf.raftStatus == RaftCandidate{
-		if rf.voteTimer != nil{
-			if rf.voteTimer.Stop(){
-				rf.voteTimer = nil
-			}
-		}
+		rf.stopVoteTimer()
 	}
 	rf.raftStatus = RaftDead
 	rf.mu.Unlock()
@@ -674,9 +677,7 @@ func (rf *Raft) Kill() {
 }
 
 
-/*
-函数功能 : 提供给 k/v server 的服务,用来获取当前Raft状态
-*/
+// 函数功能 : 提供给 k/v server 的服务,用来获取当前Raft状态
 func (rf *Raft) RaftStatus() int {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -717,9 +718,8 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 		voteTimer :      nil,
 	}
 	rf.logManager.init()
-	limit := time.Duration(MINHEARTBEATTIMEOUT + rand.Int63n(HEARTBEATTIMEOUTSECTIONSIZE))
-	rf.heartbeatTimer = time.AfterFunc(limit, rf.heartTimeoutEventProc)
 	// 恢复数据
 	rf.readPersist(persister.ReadRaftState())
+	rf.startHeartbeatTimer()
 	return rf
 }
