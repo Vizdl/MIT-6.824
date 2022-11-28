@@ -120,19 +120,6 @@ func (lm *LogManager) getLogBuff () []LogEntries {
 	return lm.logBuff
 }
 
-
-func (lm *LogManager) logCutFormBegin (end int) {
-	lm.logBuff = lm.logBuff[:end]
-}
-
-func (lm *LogManager) logCutToEnd (begin int) {
-	lm.logBuff = lm.logBuff[begin:]
-}
-
-func (lm *LogManager) logCut (begin int, end int) {
-	lm.logBuff = lm.logBuff[begin:end]
-}
-
 func (lm *LogManager) logSyncPorc (commitIndex int, prevIndex int, prevTerm int, logEntries []LogEntries) (bool, int){
 	// args.PrevIndex <= rf.logIndex 是考虑到 对方比我方日志更少
 	logIndex := lm.getLastLogIndex()
