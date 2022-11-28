@@ -37,6 +37,12 @@ func (lm *LogManager) setCommitIndex (commitIndex int) {
 	lm.commitIndex = commitIndex
 }
 
+func (lm *LogManager) logLimit (commitIndex int, lastLogIndex int, lastLogTerm int) bool {
+	logIndex, logTerm := lm.getLastLogMsg()
+	return commitIndex > lm.commitIndex ||
+		(commitIndex == lm.commitIndex && (lastLogIndex >= logIndex && lastLogTerm >= logTerm))
+}
+
 //
 // 获取最后一个日志的信息
 //

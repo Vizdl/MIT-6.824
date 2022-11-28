@@ -35,17 +35,6 @@ const HEARTBEATTIMEOUT int64 = 50000000	// 如若太慢了会导致日志同步�
 // 一次性传输日志的最大数
 const ONEMAXLOGCOUNT int = 1
 
-/*
-当每个raft意识到接替的日志条目是提交后，
-对等方应该发送一个ApplyMsg到同一服务器上的service(or tester),
-通过传递给Make()的applyCh,将CommandValid设置为true，
-表示ApplyMsg包含一个新提交的日志条目。
-
-在实验3中，你会想要发送其他类型的信息(例如，
-快照)在applyCh上;
-此时，您可以添加字段到
-ApplyMsg，但将命令有效设置为false用于其他用途。
-*/
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
@@ -104,7 +93,9 @@ func (rf *Raft) willToBeLeader() bool {
 	return rf.acquiredVote >= uint(len(rf.peers)) / 2 + 1
 }
 
+//
 // 转换为追随者
+//
 func (rf *Raft) toBeFollower (currTerm int, voteFor int, currLeader int){
 	// 初始化数据
 	rf.raftStatus = RaftFollower
@@ -117,7 +108,9 @@ func (rf *Raft) toBeFollower (currTerm int, voteFor int, currLeader int){
 	rf.startHeartbeatTimer()
 }
 
+//
 // 转换为候选者
+//
 func (rf *Raft) toBeCandidate(){
 	rf.currTerm++
 	rf.acquiredVote = 1 // 自己投自己一票
@@ -134,7 +127,9 @@ func (rf *Raft) toBeCandidate(){
 	rf.startVoteTimer()
 }
 
+//
 // 转换为领导者
+//
 func (rf *Raft) toBeLeader(){
 	rf.voteSucceedLog()
 	rf.currLeader = rf.me
@@ -149,10 +144,9 @@ func (rf *Raft) toBeLeader(){
 	}
 }
 
-/*
-选举超时处理函数 : 只有在当前处于候选者状态下会被调用
-选举周期加一,获得的票数清零,获得的票数加一,向其他服务器发起投票请求。
-*/
+//
+// 选举超时处理函数 : 只有在当前处于候选者状态下会被调用
+//
 func (rf *Raft) voteTimeoutEventProc(){
 	rf.mu.Lock() // 只要进入了这个函数,就必定是是超时。
 	defer rf.mu.Unlock()
@@ -165,10 +159,10 @@ func (rf *Raft) voteTimeoutEventProc(){
 	rf.voteTimeoutEventProcLog()
 }
 
-/*
-心跳超时处理函数 : 只有在当前处于追随者状态下会被调用
-raft变为候选人,获得的票数清零,选举周期加一,获得的票数加一,向其他服务器发起投票请求。
-*/
+//
+// 心跳超时处理函数 : 只有在当前处于追随者状态下会被调用
+//
+
 func (rf *Raft) heartTimeoutEventProc() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -439,9 +433,7 @@ func (rf *Raft) asFollowerProcRequestVote (args *RequestVoteArgs, reply *Request
 	}
 	reply.CurrTerm = rf.currTerm
 	// 选举限制
-	if args.CommitIndex > rf.logManager.getCommitIndex() ||
-		(args.CommitIndex == rf.logManager.getCommitIndex() &&
-			(args.LastLogIndex >= rf.logManager.getLastLogIndex() && args.LastLogTerm >= rf.logManager.getLastLogTerm())) {
+	if rf.logManager.logLimit(args.CommitIndex, args.LastLogIndex, args.LastLogTerm) {
 		reply.ReplyStatus = true
 		rf.voteFor = args.Requester
 	}
@@ -482,6 +474,65 @@ func (rf *Raft) asLeaderProcRequestVote(args *RequestVoteArgs, reply *RequestVot
 	// 如若对方任期比自己高,则转换为追随者,但这次回复 false
 	rf.toBeFollower(args.CurrTerm, NOVOTEFOR, NOLEADER)
 	return
+}
+
+/*
+使用raft的服务(例如k/v服务器)想要启动
+下一条命令要附加到raft的日志上。
+如果这服务器不是leader，返回false。
+否则启动同意并立即返回。
+并不能保证指挥将永远被委身于raft上，
+甚至这个领导者可能在选举中失败或失败。
+就算raft实例被杀死了
+这个函数应该优雅地返回。
+
+第一个返回值是命令在提交时出现的索引(这次提交的索引)。
+第二个返回值是本届任期。
+如果该服务器认为自己是leader，则第三个返回值为true。
+*/
+func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	isSucceed := rf.me == rf.currLeader
+	if isSucceed {
+		rf.logManager.logAppend(command, rf.currTerm)
+		rf.logMonitor.logPersistRecordAppend()
+	}
+	rf.StartLog(command, isSucceed)
+	return rf.logManager.getLastLogIndex(), rf.currTerm, isSucceed
+}
+
+func (rf *Raft) Kill() {
+	rf.mu.Lock()
+	switch rf.raftStatus {
+	case RaftFollower :
+		rf.stopHeartbeatTimer()
+		break
+	case RaftCandidate :
+		rf.stopVoteTimer()
+	case RaftLeader :
+		break
+	case RaftDead :
+		log.Fatal("多次 kill 同一个 raft 节点")
+	default:
+		log.Fatal(rf.me,"当前处于未注册的状态中 : rf.raftStatus = ",rf.raftStatus)
+	}
+	rf.raftStatus = RaftDead
+	rf.mu.Unlock()
+	rf.killLog()
+}
+
+func (rf *Raft) killed() bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.raftStatus == RaftDead
+}
+
+// 函数功能 : 提供给 k/v server 的服务,用来获取当前Raft状态
+func (rf *Raft) RaftStatus() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.currLeader
 }
 
 // return currentTerm and whether this server
@@ -552,11 +603,11 @@ type HeartbeatReply struct{
 	LastIndex 	int			// 当前匹配的索引
 	RaftStatus ERaftStatus	// 答复者的状态
 }
+
 //
 // 投票请求参数
 //
 type RequestVoteArgs struct {
-	// Your data here (2A, 2B).
 	Requester 	int // 请求者
 	CurrTerm 	int // 当前选举的届数
 	LastLogIndex int // 下一条日志的下标
@@ -578,6 +629,7 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) {
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	CurrTerm := rf.currTerm
 	raftStatus := rf.raftStatus
 	switch rf.raftStatus{
@@ -595,13 +647,13 @@ func (rf *Raft) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) {
 	default:
 		log.Fatal(rf.me,"当前处于未注册的状态中 : rf.raftStatus = ",rf.raftStatus)
 	}
-	rf.mu.Unlock()
 	rf.HeartbeatLog(CurrTerm, raftStatus, args, reply)
 }
 
+//
 // 接收投票消息,并返回结果。
+//
 func (rf *Raft) RequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
-	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	CurrTerm := rf.currTerm
@@ -635,59 +687,6 @@ func (rf *Raft) sendHeartbeat(server int, args *HeartbeatArgs, reply *HeartbeatR
 	ok := rf.peers[server].Call("Raft.Heartbeat", args, reply)
 	rf.sendHeartbeatLog(server, args, reply)
 	return ok
-}
-
-/*
-使用raft的服务(例如k/v服务器)想要启动
-下一条命令要附加到raft的日志上。
-如果这服务器不是leader，返回false。
-否则启动同意并立即返回。
-并不能保证指挥将永远被委身于raft上，
-甚至这个领导者可能在选举中失败或失败。
-就算raft实例被杀死了
-这个函数应该优雅地返回。
-
-第一个返回值是命令在提交时出现的索引(这次提交的索引)。
-第二个返回值是本届任期。
-如果该服务器认为自己是leader，则第三个返回值为true。
-*/
-func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	isSucceed := rf.me == rf.currLeader
-	if isSucceed {
-		rf.logManager.logAppend(command, rf.currTerm)
-		rf.logMonitor.logPersistRecordAppend()
-	}
-	rf.StartLog(command, isSucceed)
-	return rf.logManager.getLastLogIndex(), rf.currTerm, isSucceed
-}
-
-func (rf *Raft) Kill() {
-	rf.mu.Lock()
-	if rf.raftStatus == RaftFollower {
-		rf.stopHeartbeatTimer()
-	}
-	if rf.raftStatus == RaftCandidate{
-		rf.stopVoteTimer()
-	}
-	rf.raftStatus = RaftDead
-	rf.mu.Unlock()
-	rf.killLog()
-}
-
-
-// 函数功能 : 提供给 k/v server 的服务,用来获取当前Raft状态
-func (rf *Raft) RaftStatus() int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.currLeader
-}
-
-func (rf *Raft) killed() bool {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.raftStatus == RaftDead
 }
 
 /*
