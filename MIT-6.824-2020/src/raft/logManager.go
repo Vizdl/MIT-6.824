@@ -37,6 +37,12 @@ func (lm *LogManager) setCommitIndex (commitIndex int) {
 	lm.commitIndex = commitIndex
 }
 
+func (lm *LogManager) decode (commitIndex int, appliedIndex int, logBuff []LogEntries) {
+	lm.commitIndex = commitIndex
+	lm.appliedIndex = appliedIndex
+	lm.logBuff = logBuff
+}
+
 func (lm *LogManager) logLimit (commitIndex int, lastLogIndex int, lastLogTerm int) bool {
 	logIndex, logTerm := lm.getLastLogMsg()
 	return commitIndex > lm.commitIndex ||
@@ -79,8 +85,15 @@ func (lm *LogManager) getLogBuffSize() int {
 	return len(lm.logBuff)
 }
 
-func (lm *LogManager) getLogBuffContext(begin int, end int) []LogEntries {
-	return lm.logBuff[begin:end]
+func (lm *LogManager) getNeedSyncLogEntries (nextIndex int) []LogEntries {
+	if nextIndex <= lm.getLastLogIndex() {
+		end := lm.getLogBuffSize()
+		if end >= nextIndex + ONEMAXLOGCOUNT {
+			end = nextIndex + ONEMAXLOGCOUNT
+		}
+		return lm.logBuff[nextIndex:end]
+	}
+	return nil
 }
 
 //

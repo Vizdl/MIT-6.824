@@ -22,6 +22,7 @@ const (
 
 const NOLEADER = -1
 const NOVOTEFOR = -1
+const FISTTERM = 1
 // 心跳超时基数
 const MINHEARTBEATTIMEOUT int64 = 200000000
 // 心跳超时随机数
@@ -212,6 +213,8 @@ func (rf *Raft) toSendRequestVote(CurrTerm int, raftId int){
 			if rf.willToBeLeader() {
 				if rf.stopVoteTimer() {
 					rf.toBeLeader()
+				}else {
+					log.Println("即将成为领导者时关闭候选者定时器失败")
 				}
 			}
 		}
@@ -231,6 +234,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 		if tick - lastTick >= HEARTBEATTIMEOUT {
 			lastTick = tick
 			// 1. 初始化心跳参数
+			// 未匹配上时, nextIndex 是猜测值。匹配上后, nextIndex 就是确定的值。
 			nextIndex := rf.logMonitor.getNextIndex(raftId)
 			args := HeartbeatArgs{
 				Sender: rf.me,
@@ -239,13 +243,9 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 				PrevTerm: rf.logManager.getLogTerm(nextIndex - 1),
 				CommitIndex: rf.logManager.getCommitIndex(),
 			}
-			// 2. 填充日志 
-			if nextIndex <= rf.logManager.getLastLogIndex() && isMatch {
-				end := rf.logManager.getLogBuffSize()
-				if end >= nextIndex + ONEMAXLOGCOUNT {
-					end = nextIndex + ONEMAXLOGCOUNT
-				}
-				args.Entries = rf.logManager.getLogBuffContext(nextIndex, end)
+			// 2. 如若已经匹配,并且又有新的日志未同步
+			if isMatch {
+				args.Entries = rf.logManager.getNeedSyncLogEntries(nextIndex)
 			}
 			rf.mu.Unlock()
 			reply := HeartbeatReply{}
@@ -284,9 +284,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 			} else {
 				// 如若第一次匹配到 : 没有发送日志
 				if !isMatch {
-					for i := 1; i <= args.PrevIndex; i++{
-						rf.logMonitor.logPersistRecordInc(i)
-					}
+					rf.logMonitor.logPersistRecordTo(args.PrevIndex)
 					isMatch = true
 				}else {
 					nextIndex = rf.logMonitor.getNextIndex(raftId)
@@ -303,8 +301,8 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 						}
 					}
 					rf.logManager.submitCommitLog(rf.applyCh)
-					rf.persist()
 					rf.logMonitor.setNextIndex(raftId, nextIndex + len(args.Entries))
+					rf.persist()
 				}
 			}
 		}
@@ -475,12 +473,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 func (rf *Raft) Kill() {
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	switch rf.raftStatus {
 	case RaftFollower :
 		rf.stopHeartbeatTimer()
 		break
 	case RaftCandidate :
 		rf.stopVoteTimer()
+		break
 	case RaftLeader :
 		break
 	case RaftDead :
@@ -489,7 +489,6 @@ func (rf *Raft) Kill() {
 		log.Fatal(rf.me,"当前处于未注册的状态中 : rf.raftStatus = ",rf.raftStatus)
 	}
 	rf.raftStatus = RaftDead
-	rf.mu.Unlock()
 	rf.killLog()
 }
 
@@ -499,7 +498,9 @@ func (rf *Raft) killed() bool {
 	return rf.raftStatus == RaftDead
 }
 
+//
 // 函数功能 : 提供给 k/v server 的服务,用来获取当前Raft状态
+//
 func (rf *Raft) RaftStatus() int {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -551,9 +552,7 @@ func (rf *Raft) readPersist(data []byte) {
 	}else {
 		rf.currTerm = currTerm
 		rf.voteFor = voteFor
-		rf.logManager.setCommitIndex(commitIndex)
-		rf.logManager.setAppliedIndex(lastApplied)
-		rf.logManager.setLogBuff(logBuff)
+		rf.logManager.decode(commitIndex, lastApplied, logBuff)
 	}
 }
 
@@ -678,7 +677,7 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 		applyCh :        applyCh,
 		me :             me,
 		raftStatus :     RaftFollower,
-		currTerm :       1, /* 任期初始化为1 */
+		currTerm :       FISTTERM,
 		voteFor :        NOVOTEFOR,
 		acquiredVote :   0,
 		currLeader :     NOLEADER,

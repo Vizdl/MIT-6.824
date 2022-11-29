@@ -31,6 +31,12 @@ func (lm *LogMonitor) logPersistRecordInc (index int) {
 	lm.logPersistRecord[index]++
 }
 
+func (lm *LogMonitor) logPersistRecordTo (index int) {
+	for i := 1; i <= index; i++{
+		lm.logPersistRecord[i]++
+	}
+}
+
 func (lm *LogMonitor) logPersistRecordAppend () {
 	lm.logPersistRecord = append(lm.logPersistRecord, 1)
 }
