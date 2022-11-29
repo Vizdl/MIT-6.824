@@ -101,14 +101,14 @@ type Raft struct {
 	// 日志持久化
 	applyCh   chan ApplyMsg		  	// 日志持久化对象
 	// 日志
-	logManager LogManager
+	logManager LogManager			// 日志管理单元
 	/*** 追随者有效 ***/
 	heartbeatTimer *time.Timer 		// 心跳定时器
 	/*** 候选者有效 ***/
 	acquiredVote uint				// 在当前选举周期获得的票数
 	voteTimer *time.Timer 			// 选举定时器
 	/*** 领导者有效 ***/
-	logMonitor LogMonitor			// 日志监控工具
+	logSynchronizer LogSynchronizer // 日志同步单元
 }
 
 func (rf *Raft) startHeartbeatTimer() {
@@ -191,7 +191,7 @@ func (rf *Raft) toBeLeader(){
 	rf.voteFor = rf.me
 	rf.raftStatus = RaftLeader
 	// 日志持久化记录 初始化
-	rf.logMonitor.init(len(rf.peers), rf.logManager.getLastLogIndex())
+	rf.logSynchronizer.init(len(rf.peers), rf.logManager.getLastLogIndex())
 	// 开启协程,给其他 raft 节点发送心跳
 	for i := 0; i < len(rf.peers); i++ {
 		if i != rf.me {
@@ -301,7 +301,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 			lastTick = tick
 			// 1. 初始化心跳参数
 			// 未匹配上时, nextIndex 是猜测值。匹配上后, nextIndex 就是确定的值。
-			nextIndex := rf.logMonitor.getNextIndex(raftId)
+			nextIndex := rf.logSynchronizer.getNextIndex(raftId)
 			args := HeartbeatArgs{
 				Sender: rf.me,
 				CurrTerm: rf.currTerm,
@@ -345,20 +345,20 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 			}
 			// 处理符合标准的回复
 			if !reply.ReplyStatus {
-				rf.logMonitor.setNextIndex(raftId, reply.LastIndex + 1)
+				rf.logSynchronizer.setNextIndex(raftId, reply.LastIndex + 1)
 			} else {
 				// 如若第一次匹配到 : 没有发送日志
 				if !isMatch {
-					rf.logMonitor.logPersistRecordTo(args.PrevIndex)
+					rf.logSynchronizer.logPersistRecordTo(args.PrevIndex)
 					isMatch = true
 				}else {
-					nextIndex = rf.logMonitor.getNextIndex(raftId)
+					nextIndex = rf.logSynchronizer.getNextIndex(raftId)
 					/* 更新 logPersistRecord 和 commitIndex */
 					for i := 0; i < len(args.Entries); i++ {
 						if args.Entries[i].Term == rf.currTerm {
-							rf.logMonitor.logPersistRecordInc(nextIndex + i)
+							rf.logSynchronizer.logPersistRecordInc(nextIndex + i)
 							// 如若超出一半拥有该日志
-							if rf.logMonitor.logPersistRecordCanCommit(nextIndex + i) {
+							if rf.logSynchronizer.logPersistRecordCanCommit(nextIndex + i) {
 								if rf.logManager.getCommitIndex() < nextIndex + i{
 									rf.logManager.setCommitIndex(nextIndex)
 								}
@@ -366,7 +366,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 						}
 					}
 					rf.logManager.submitCommitLog(rf.applyCh)
-					rf.logMonitor.setNextIndex(raftId, nextIndex + len(args.Entries))
+					rf.logSynchronizer.setNextIndex(raftId, nextIndex + len(args.Entries))
 					rf.persist()
 				}
 			}
@@ -523,7 +523,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isSucceed := rf.me == rf.currLeader
 	if isSucceed {
 		rf.logManager.logAppend(command, rf.currTerm)
-		rf.logMonitor.logPersistRecordAppend()
+		rf.logSynchronizer.logPersistRecordAppend()
 	}
 	rf.StartLog(command, isSucceed)
 	return rf.logManager.getLastLogIndex(), rf.currTerm, isSucceed
