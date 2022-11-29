@@ -155,7 +155,7 @@ func (lm *LogManager) logSyncPorc (commitIndex int, prevIndex int, prevTerm int,
 				lm.commitIndex = commitIndex
 			}
 		}
-		return true, 0
+		return true, len(lm.logBuff) - 1
 	}
 	if prevIndex > logIndex {
 		return false, logIndex

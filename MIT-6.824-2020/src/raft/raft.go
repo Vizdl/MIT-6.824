@@ -2,7 +2,6 @@ package raft
 
 import (
 	"bytes"
-	"fmt"
 	"labgob"
 	"labrpc"
 	"log"
@@ -352,6 +351,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 					rf.logSynchronizer.logPersistRecordTo(args.PrevIndex)
 					isMatch = true
 				}else {
+					// 同步日志成功
 					nextIndex = rf.logSynchronizer.getNextIndex(raftId)
 					/* 更新 logPersistRecord 和 commitIndex */
 					for i := 0; i < len(args.Entries); i++ {
@@ -366,7 +366,7 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 						}
 					}
 					rf.logManager.submitCommitLog(rf.applyCh)
-					rf.logSynchronizer.setNextIndex(raftId, nextIndex + len(args.Entries))
+					rf.logSynchronizer.setNextIndex(raftId, reply.LastIndex + 1)
 					rf.persist()
 				}
 			}
@@ -400,7 +400,7 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 		return
 	}
 	if !rf.stopHeartbeatTimer() {
-		fmt.Println("第 ",rf.me," 台服务器作为追随者关闭定时器异常,表示心跳超时已经发生了")
+		log.Println("第 ",rf.me," 台服务器作为追随者关闭定时器异常,表示心跳超时已经发生了")
 		return
 	}
 	// 如若对方任期大于自己,则需要等心跳计时器关闭后转换状态
@@ -427,7 +427,7 @@ func (rf *Raft) asCandidateProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatR
 		return
 	}
 	if !rf.stopVoteTimer() {
-		fmt.Println("第",rf.me,"台服务器作为候选者关闭定时器异常")
+		log.Println("第",rf.me,"台服务器作为候选者关闭定时器异常")
 		return
 	}
 	rf.toBeFollower(args.CurrTerm, args.Sender, args.Sender)
@@ -460,7 +460,7 @@ func (rf *Raft) asFollowerProcRequestVote (args *RequestVoteArgs, reply *Request
 	}
 	if args.CurrTerm > rf.currTerm {
 		if !rf.stopHeartbeatTimer() {
-			fmt.Println("第",rf.me,"台服务器作为追随者关闭定时器异常")
+			log.Println("第",rf.me,"台服务器作为追随者关闭定时器异常")
 			return
 		}
 		// 更新任期为最新
@@ -494,7 +494,7 @@ func (rf *Raft) asCandidateProcRequestVote (args *RequestVoteArgs, reply *Reques
 	}
 	// 对方任期数大于我
 	if !rf.stopVoteTimer() {
-		fmt.Println("第",rf.me,"台服务器作为候选者关闭定时器异常")
+		log.Println("第",rf.me,"台服务器作为候选者关闭定时器异常")
 		return
 	}
 	// 身份转换为追随者, 回复 false
