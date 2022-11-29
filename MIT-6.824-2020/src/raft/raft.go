@@ -279,7 +279,6 @@ func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 			}
 			// 处理符合标准的回复
 			if !reply.ReplyStatus {
-				isMatch = false
 				rf.logMonitor.setNextIndex(raftId, reply.LastIndex + 1)
 			} else {
 				// 如若第一次匹配到 : 没有发送日志
