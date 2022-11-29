@@ -166,7 +166,6 @@ func (rf *Raft) voteTimeoutEventProc(){
 //
 // 心跳超时处理函数 : 只有在当前处于追随者状态下会被调用
 //
-
 func (rf *Raft) heartTimeoutEventProc() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -325,7 +324,7 @@ end:
 }
 
 func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatReply) {
-	// 请求参数校验
+	// 如若同一任期出现两个不同的 Leader
 	if rf.currLeader != NOLEADER && args.CurrTerm == rf.currTerm && args.Sender != rf.currLeader {
 		log.Fatal("第 ",rf.me," 台服务器在第 ",rf.currTerm," 届收到心跳包,但领导应该是 ",rf.currLeader," 却收到 ",args.Sender," 发送的心跳包")
 		return
@@ -347,6 +346,10 @@ func (rf *Raft) asFollowerProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRe
 	if args.CurrTerm > rf.currTerm {
 		rf.toBeFollower(args.CurrTerm, args.Sender, args.Sender)
 		return
+	}
+	// 如若是作为追随者第一次收到当前任期 Leader 的心跳
+	if rf.currLeader == NOLEADER {
+		rf.currLeader = args.Sender
 	}
 	reply.ReplyStatus, reply.LastIndex = rf.logManager.logSyncPorc(args.CommitIndex, args.PrevIndex, args.PrevTerm, args.Entries)
 	rf.logManager.submitCommitLog(rf.applyCh)
@@ -370,6 +373,7 @@ func (rf *Raft) asCandidateProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatR
 }
 
 func (rf *Raft) asLeaderProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatReply) {
+	// 如若同一任期出现两个不同的 Leader
 	if args.CurrTerm == rf.currTerm {
 		log.Fatal("第",rf.me,"台服务器在第",rf.currTerm,"领导应该是自己却收到",args.Sender,"发送的心跳包")
 	}
@@ -382,7 +386,7 @@ func (rf *Raft) asLeaderProcHeartbeat (args *HeartbeatArgs, reply *HeartbeatRepl
 		return
 	}
 	// 如若作为领导者收到更高任期的心跳,则转换状态。
-	rf.toBeFollower(args.CurrTerm, args.Sender, args.Sender)
+	rf.toBeFollower(args.CurrTerm, NOVOTEFOR, args.Sender)
 }
 
 func (rf *Raft) asFollowerProcRequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
@@ -390,11 +394,7 @@ func (rf *Raft) asFollowerProcRequestVote (args *RequestVoteArgs, reply *Request
 	reply.Replyer = rf.me
 	reply.ReplyStatus = false
 	reply.CurrTerm = rf.currTerm
-	// 根据任期和是否投票决定是否需要拒绝
 	if args.CurrTerm < rf.currTerm {
-		return
-	}
-	if args.CurrTerm == rf.currTerm && rf.voteFor != NOVOTEFOR {
 		return
 	}
 	if args.CurrTerm > rf.currTerm {
@@ -404,8 +404,11 @@ func (rf *Raft) asFollowerProcRequestVote (args *RequestVoteArgs, reply *Request
 		}
 		// 更新任期为最新
 		rf.toBeFollower(args.CurrTerm, NOVOTEFOR, NOLEADER)
+		return
 	}
-	reply.CurrTerm = rf.currTerm
+	if rf.voteFor != NOVOTEFOR {
+		return
+	}
 	// 选举限制
 	if rf.logManager.logLimit(args.CommitIndex, args.LastLogIndex, args.LastLogTerm) {
 		reply.ReplyStatus = true
@@ -422,7 +425,7 @@ func (rf *Raft) asCandidateProcRequestVote (args *RequestVoteArgs, reply *Reques
 		return
 	}
 	if args.CurrTerm == rf.currTerm {
-		// 当前状态一定要是已投票,否则不安全。
+		// 当前状态一定要是已投票
 		if rf.voteFor == NOVOTEFOR {
 			log.Fatal(rf.me, "在 asCandidateProcRequestVote 中 !rf.hasVote 出错。")
 		}
@@ -450,20 +453,9 @@ func (rf *Raft) asLeaderProcRequestVote(args *RequestVoteArgs, reply *RequestVot
 	return
 }
 
-/*
-使用raft的服务(例如k/v服务器)想要启动
-下一条命令要附加到raft的日志上。
-如果这服务器不是leader，返回false。
-否则启动同意并立即返回。
-并不能保证指挥将永远被委身于raft上，
-甚至这个领导者可能在选举中失败或失败。
-就算raft实例被杀死了
-这个函数应该优雅地返回。
-
-第一个返回值是命令在提交时出现的索引(这次提交的索引)。
-第二个返回值是本届任期。
-如果该服务器认为自己是leader，则第三个返回值为true。
-*/
+//
+// 提交日志
+//
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -476,6 +468,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	return rf.logManager.getLastLogIndex(), rf.currTerm, isSucceed
 }
 
+//
+// 杀死 raft 节点
+//
 func (rf *Raft) Kill() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -498,6 +493,9 @@ func (rf *Raft) Kill() {
 	rf.killLog()
 }
 
+//
+// 判断 raft 节点是否被杀死
+//
 func (rf *Raft) killed() bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -576,18 +574,18 @@ type HeartbeatReply struct{
 	Replyer 	int			// 答复者
 	CurrTerm 	int 		// 答复者的当前任期
 	LastIndex 	int			// 当前匹配的索引
-	RaftStatus ERaftStatus	// 答复者的状态
+	RaftStatus 	ERaftStatus	// 答复者的状态
 }
 
 //
 // 投票请求参数
 //
 type RequestVoteArgs struct {
-	Requester 	int // 请求者
-	CurrTerm 	int // 当前选举的届数
-	LastLogIndex int // 下一条日志的下标
-	LastLogTerm int // 上一条日志的任期
-	CommitIndex int // 提交的索引
+	Requester		int		// 请求者
+	CurrTerm 		int		// 当前选举的届数
+	LastLogIndex 	int		// 下一条日志的下标
+	LastLogTerm 	int 	// 上一条日志的任期
+	CommitIndex 	int 	// 提交的索引
 }
 
 //
@@ -595,8 +593,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	ReplyStatus bool 	// 答复状态
-	Replyer int			// 答复者
-	CurrTerm int 		// 答复者的当前任期
+	Replyer 	int		// 答复者
+	CurrTerm 	int 	// 答复者的当前任期
 }
 
 //
@@ -663,18 +661,13 @@ func (rf *Raft) sendHeartbeat(server int, args *HeartbeatArgs, reply *HeartbeatR
 	return ok
 }
 
-/*
-服务或测试人员希望创建一个Raft服务器。
-所有Raft服务器(包括这个服务器)的端口都在peer[]中。
-此服务器的端口是peer[me]。所有服务器的对等点[]数组具有相同的顺序。
-persister是此服务器保存其持久状态的地方，最初还保存最近保存的状态(如果有的话)。
-applyCh是测试者或服务期望筏发送ApplyMsg消息的通道，
-Make()必须快速返回，因此它应该为任何长时间运行的工作启动goroutines。
-*/
+//
+// 创建 raft 节点
+//
 func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
 	// 1. 参数检测
 	if peers == nil || len(peers) < 1 || me < 0 || me > len(peers) - 1 || persister == nil || applyCh == nil {
-		return nil
+		log.Fatal("启动 raft 参数错误")
 	}
 	// 2. 初始化 raft 节点
 	rf := &Raft{
