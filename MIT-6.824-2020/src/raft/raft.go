@@ -152,6 +152,9 @@ func (rf *Raft) voteTimeoutEventProc(){
 	rf.mu.Lock() // 只要进入了这个函数,就必定是是超时。
 	defer rf.mu.Unlock()
 	// 1. 状态检查
+	if rf.raftStatus == RaftDead {
+		return
+	}
 	if rf.raftStatus != RaftCandidate{
 		log.Fatal("第",rf.me,"台服务器在第",rf.currTerm,"届发生选举超时, raftStatus =",rf.raftStatus,"错误的raft状态")
 	}
@@ -168,6 +171,9 @@ func (rf *Raft) heartTimeoutEventProc() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	// 1. 状态检查
+	if rf.raftStatus == RaftDead {
+		return
+	}
 	if rf.raftStatus != RaftFollower {
 		log.Fatal("第",rf.me,"台服务器在第",rf.currTerm,"届发生心跳超时, raftStatus =",rf.raftStatus,"错误的raft状态")
 	}
@@ -473,6 +479,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	// 这里关闭定时器失败后,不做任何处理,在定时器处理函数里处理。
 	switch rf.raftStatus {
 	case RaftFollower :
 		rf.stopHeartbeatTimer()
