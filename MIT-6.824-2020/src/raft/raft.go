@@ -42,12 +42,57 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
+//
+// rpc 心跳请求参数
+//
+type HeartbeatArgs struct{
+	Sender 		int				// 发送者
+	CurrTerm 	int				// 当前任期
+	PrevIndex 	int 			// 上一次的索引
+	PrevTerm 	int 			// 上一次的任期
+	Entries 	[]LogEntries  	// 日志条目
+	CommitIndex int 			// 当前提交的索引
+}
+
+//
+// rpc 心跳请求回复
+//
+type HeartbeatReply struct{
+	ReplyStatus bool 		// 答复状态
+	Replyer 	int			// 答复者
+	CurrTerm 	int 		// 答复者的当前任期
+	LastIndex 	int			// 当前匹配的索引
+	RaftStatus 	ERaftStatus	// 答复者的状态
+}
+
+//
+// rpc 投票请求参数
+//
+type RequestVoteArgs struct {
+	Requester		int		// 请求者
+	CurrTerm 		int		// 当前选举的届数
+	LastLogIndex 	int		// 下一条日志的下标
+	LastLogTerm 	int 	// 上一条日志的任期
+	CommitIndex 	int 	// 提交的索引
+}
+
+//
+// rpc 投票请求答复
+//
+type RequestVoteReply struct {
+	ReplyStatus bool 	// 答复状态
+	Replyer 	int		// 答复者
+	CurrTerm 	int 	// 答复者的当前任期
+}
+
 type Raft struct {
 	/*** 通用数据 ***/
 	// 状态
 	mu        sync.Mutex          	// 状态锁
 	raftStatus ERaftStatus			// 当前 raft 节点的状态
 	currTerm int					// 当前选举任期数,需要持久化
+	currLeader int					// 当前届领导者,如若没有值为 NOLEADER
+	voteFor	int						// 在当前选举任期票投给了谁
 	// raft rpc
 	peers     []*labrpc.ClientEnd 	// RPC所有对等点的端点,依赖该属性进行rpc通信。
 	me        int                 	// 当前节点编号
@@ -57,10 +102,7 @@ type Raft struct {
 	applyCh   chan ApplyMsg		  	// 日志持久化对象
 	// 日志
 	logManager LogManager
-	/*** 追随者和候选者有效 ***/
-	voteFor	int						// 在当前选举任期票投给了谁
 	/*** 追随者有效 ***/
-	currLeader int					// 当前届领导者
 	heartbeatTimer *time.Timer 		// 心跳定时器
 	/*** 候选者有效 ***/
 	acquiredVote uint				// 在当前选举周期获得的票数
@@ -85,6 +127,18 @@ func (rf *Raft) startVoteTimer() {
 
 func (rf *Raft) stopVoteTimer() bool {
 	return rf.voteTimer != nil && rf.voteTimer.Stop()
+}
+
+func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	rf.sendRequestVoteLog(server, args, reply)
+	return ok
+}
+
+func (rf *Raft) sendHeartbeat(server int, args *HeartbeatArgs, reply *HeartbeatReply) bool {
+	ok := rf.peers[server].Call("Raft.Heartbeat", args, reply)
+	rf.sendHeartbeatLog(server, args, reply)
+	return ok
 }
 
 //
@@ -134,6 +188,7 @@ func (rf *Raft) toBeCandidate(){
 func (rf *Raft) toBeLeader(){
 	rf.voteSucceedLog()
 	rf.currLeader = rf.me
+	rf.voteFor = rf.me
 	rf.raftStatus = RaftLeader
 	// 日志持久化记录 初始化
 	rf.logMonitor.init(len(rf.peers), rf.logManager.getLastLogIndex())
@@ -181,6 +236,9 @@ func (rf *Raft) heartTimeoutEventProc() {
 	rf.heartTimeoutEventProcLog()
 }
 
+//
+// 发送投票请求协程
+//
 func (rf *Raft) toSendRequestVote(CurrTerm int, raftId int){
 	args := RequestVoteArgs{
 		Requester : rf.me,
@@ -228,6 +286,9 @@ func (rf *Raft) toSendRequestVote(CurrTerm int, raftId int){
 	}
 }
 
+//
+// 发送心跳请求协程
+//
 func (rf *Raft) toSendHeartbeat(CurrTerm int, raftId int){
 	lastTick := time.Now().UnixNano() - HEARTBEATTIMEOUT // 确保刚进入就一定能发出心跳
 	/* 按照逻辑匹配成功后就不会失败 */
@@ -511,8 +572,9 @@ func (rf *Raft) RaftStatus() int {
 	return rf.currLeader
 }
 
-// return currentTerm and whether this server
-// believes it is the leader.
+//
+// 获取当前任期,以及判断当前节点是否是 Leader
+//
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -560,45 +622,8 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 }
 
-type HeartbeatArgs struct{
-	Sender 		int				// 发送者
-	CurrTerm 	int				// 当前任期
-	PrevIndex 	int 			// 上一次的索引
-	PrevTerm 	int 			// 上一次的任期
-	Entries 	[]LogEntries  	// 日志条目
-	CommitIndex int 			// 当前提交的索引
-}
-
-type HeartbeatReply struct{
-	ReplyStatus bool 		// 答复状态
-	Replyer 	int			// 答复者
-	CurrTerm 	int 		// 答复者的当前任期
-	LastIndex 	int			// 当前匹配的索引
-	RaftStatus 	ERaftStatus	// 答复者的状态
-}
-
 //
-// 投票请求参数
-//
-type RequestVoteArgs struct {
-	Requester		int		// 请求者
-	CurrTerm 		int		// 当前选举的届数
-	LastLogIndex 	int		// 下一条日志的下标
-	LastLogTerm 	int 	// 上一条日志的任期
-	CommitIndex 	int 	// 提交的索引
-}
-
-//
-// 投票请求答复
-//
-type RequestVoteReply struct {
-	ReplyStatus bool 	// 答复状态
-	Replyer 	int		// 答复者
-	CurrTerm 	int 	// 答复者的当前任期
-}
-
-//
-// 对外提供的服务 : 接收心跳包
+// rpc 处理函数 : 心跳包处理
 //
 func (rf *Raft) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) {
 	rf.mu.Lock()
@@ -624,7 +649,7 @@ func (rf *Raft) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) {
 }
 
 //
-// 接收投票消息,并返回结果。
+// rpc 处理函数 : 接收投票消息,并返回结果。
 //
 func (rf *Raft) RequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
@@ -647,18 +672,6 @@ func (rf *Raft) RequestVote (args *RequestVoteArgs, reply *RequestVoteReply) {
 		log.Fatal(rf.me,"当前处于未注册的状态中 : rf.raftStatus = ",rf.raftStatus)
 	}
 	rf.RequestVoteLog(CurrTerm, raftStatus, args, reply)
-}
-
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	rf.sendRequestVoteLog(server, args, reply)
-	return ok
-}
-
-func (rf *Raft) sendHeartbeat(server int, args *HeartbeatArgs, reply *HeartbeatReply) bool {
-	ok := rf.peers[server].Call("Raft.Heartbeat", args, reply)
-	rf.sendHeartbeatLog(server, args, reply)
-	return ok
 }
 
 //
